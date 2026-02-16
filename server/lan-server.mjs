@@ -1,10 +1,34 @@
 import { WebSocketServer } from 'ws'
+import { MongoClient } from 'mongodb'
 
 const PORT = Number(process.env.LAN_PORT ?? 8787)
 const ROOM_SIZE_LIMIT = 6
+const MONGO_URI = process.env.MONGO_URI ?? 'mongodb://127.0.0.1:27017'
+const MONGO_DB_NAME = process.env.MONGO_DB_NAME ?? 'temporis'
+
+let mongoClient = null
+let chatMessagesCollection = null
 
 const rooms = new Map()
 const clients = new Map()
+
+async function connectMongo() {
+  mongoClient = new MongoClient(MONGO_URI)
+  await mongoClient.connect()
+  const mongoDb = mongoClient.db(MONGO_DB_NAME)
+  chatMessagesCollection = mongoDb.collection('chat_messages')
+  await chatMessagesCollection.createIndex({ roomCode: 1, timestamp: -1 })
+  console.log(`MongoDB connected on ${MONGO_URI} (db: ${MONGO_DB_NAME})`)
+}
+
+async function closeMongo() {
+  if (!mongoClient) {
+    return
+  }
+  await mongoClient.close()
+  mongoClient = null
+  chatMessagesCollection = null
+}
 
 function randomId(length = 6) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -651,14 +675,29 @@ wss.on('connection', (socket) => {
         return
       }
 
-      broadcastToRoom(client.roomCode, {
+      const chatMessage = {
         type: 'chat_message',
         roomCode: client.roomCode,
         fromClientId: clientId,
         sender: getClientNickname(room, clientId),
         text,
         timestamp: Date.now(),
-      })
+      }
+
+      broadcastToRoom(client.roomCode, chatMessage)
+      if (chatMessagesCollection) {
+        void chatMessagesCollection
+          .insertOne({
+            roomCode: chatMessage.roomCode,
+            fromClientId: chatMessage.fromClientId,
+            sender: chatMessage.sender,
+            text: chatMessage.text,
+            timestamp: chatMessage.timestamp,
+          })
+          .catch((error) => {
+            console.error('Failed to persist chat message:', error)
+          })
+      }
       return
     }
 
@@ -826,6 +865,46 @@ wss.on('connection', (socket) => {
     removeFromRoom(clientId, { preserveSeatOnDisconnect: true })
     clients.delete(clientId)
   })
+})
+
+try {
+  await connectMongo()
+} catch (error) {
+  console.error('Failed to connect to MongoDB:', error)
+  process.exit(1)
+}
+
+let shuttingDown = false
+
+async function shutdown(signal) {
+  if (shuttingDown) {
+    return
+  }
+  shuttingDown = true
+
+  console.log(`Received ${signal}. Shutting down LAN server...`)
+
+  clients.forEach(({ socket }) => {
+    try {
+      socket.close()
+    } catch {
+      // ignore socket close errors during shutdown
+    }
+  })
+
+  await new Promise((resolve) => {
+    wss.close(() => resolve())
+  })
+  await closeMongo()
+  process.exit(0)
+}
+
+process.on('SIGINT', () => {
+  void shutdown('SIGINT')
+})
+
+process.on('SIGTERM', () => {
+  void shutdown('SIGTERM')
 })
 
 console.log(`LAN lobby server running on ws://0.0.0.0:${PORT}`)

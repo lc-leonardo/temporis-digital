@@ -34,6 +34,21 @@ npm run dev
 npm run lan:server
 ```
 
+This server now requires a local MongoDB connection.
+
+Default local values (already built in):
+
+- `MONGO_URI=mongodb://127.0.0.1:27017`
+- `MONGO_DB_NAME=temporis`
+
+If your local MongoDB is running with default settings, no extra config is needed.
+
+PowerShell custom example:
+
+```bash
+$env:MONGO_URI="mongodb://127.0.0.1:27017"; $env:MONGO_DB_NAME="temporis"; npm run lan:server
+```
+
 Server default:
 
 - WebSocket URL: `ws://<HOST_IP>:8787`
