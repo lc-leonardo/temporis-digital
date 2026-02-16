@@ -1,0 +1,102 @@
+{
+  "generatedAt": "2026-02-14T20:46:45.683Z",
+  "config": {
+    "games": 1,
+    "maxSteps": 1200,
+    "seed": 999,
+    "replaySeed": 695888865
+  },
+  "scenarios": [
+    {
+      "name": "time_skip_then_win",
+      "ok": true
+    },
+    {
+      "name": "rewrite_blocked_without_timeline",
+      "ok": true
+    },
+    {
+      "name": "present_blocked_without_discard_card",
+      "ok": true
+    },
+    {
+      "name": "time_swap_blocked_without_own_timeline",
+      "ok": true
+    },
+    {
+      "name": "rewrite_flow_returns_target_to_hand",
+      "ok": true
+    },
+    {
+      "name": "one_vs_one_time_skip_forces_extra_skip",
+      "ok": true
+    },
+    {
+      "name": "tnh_double_chain_resolves_original",
+      "ok": true
+    },
+    {
+      "name": "future_peek_canceled_by_tnh",
+      "ok": true
+    },
+    {
+      "name": "future_peek_reveals_without_tnh",
+      "ok": true
+    },
+    {
+      "name": "paradox_swap_happy_path",
+      "ok": true
+    },
+    {
+      "name": "back_in_time_only_last_targetable",
+      "ok": true
+    },
+    {
+      "name": "local_reset_happy_path",
+      "ok": true
+    },
+    {
+      "name": "time_swap_happy_path",
+      "ok": true
+    },
+    {
+      "name": "present_discard_then_draw_flow",
+      "ok": true
+    },
+    {
+      "name": "deck_empty_winner_by_tiebreak",
+      "ok": true
+    }
+  ],
+  "fuzz": {
+    "ok": true,
+    "metrics": {
+      "matchesPlayed": 1,
+      "completedMatches": 1,
+      "totalSteps": 271,
+      "maxStepsObserved": 271,
+      "phaseVisits": {
+        "PLAYER_CHOICE": 119,
+        "REACTION_WINDOW": 86,
+        "DISCARD_SELECTION": 11,
+        "ACTION_SELECTION": 54,
+        "GAME_OVER": 1
+      },
+      "actionCounts": {
+        "play_card": 81,
+        "pass_reaction": 81,
+        "discard_pending_event": 11,
+        "draw_end_turn": 38,
+        "cancel_reaction": 5,
+        "select_action_target": 41,
+        "select_future_target": 13
+      },
+      "winners": {
+        "Bot 5": 1
+      },
+      "playersCountDistribution": {
+        "6": 1
+      }
+    }
+  }
+}

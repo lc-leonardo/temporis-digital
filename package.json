@@ -1,0 +1,45 @@
+{
+  "name": "temporis-digital",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:host": "vite --host 0.0.0.0 --port 5173",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "lan:server": "node server/lan-server.mjs",
+    "host:all": "concurrently -k -n LAN,WEB -c cyan,magenta \"npm:lan:server\" \"npm:dev:host\"",
+    "assets:optimize-cards": "node scripts/optimize-card-images.mjs",
+    "sim:rules": "tsx scripts/simulate-rules.ts",
+    "sim:rules:quick": "tsx scripts/simulate-rules.ts --games 80 --maxSteps 700",
+    "sim:rules:stress": "tsx scripts/simulate-rules.ts --games 600 --maxSteps 1200",
+    "sim:rules:report": "tsx scripts/simulate-rules.ts --games 300 --maxSteps 900 --report --report-file reports/sim-rules-report.json",
+    "sim:rules:replay": "tsx scripts/simulate-rules.ts --games 1 --maxSteps 1200",
+    "verify:all": "npm run build && npm run sim:rules:quick && npm run sim:rules:report"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "concurrently": "^9.2.1",
+    "sharp": "^0.34.5",
+    "tsx": "^4.21.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.48.0",
+    "vite": "^7.3.1"
+  }
+}

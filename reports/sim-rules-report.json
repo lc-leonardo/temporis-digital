@@ -1,0 +1,111 @@
+{
+  "generatedAt": "2026-02-14T20:53:10.189Z",
+  "config": {
+    "games": 300,
+    "maxSteps": 900,
+    "seed": 386220,
+    "replaySeed": null
+  },
+  "scenarios": [
+    {
+      "name": "time_skip_then_win",
+      "ok": true
+    },
+    {
+      "name": "rewrite_blocked_without_timeline",
+      "ok": true
+    },
+    {
+      "name": "present_blocked_without_discard_card",
+      "ok": true
+    },
+    {
+      "name": "time_swap_blocked_without_own_timeline",
+      "ok": true
+    },
+    {
+      "name": "rewrite_flow_returns_target_to_hand",
+      "ok": true
+    },
+    {
+      "name": "one_vs_one_time_skip_forces_extra_skip",
+      "ok": true
+    },
+    {
+      "name": "tnh_double_chain_resolves_original",
+      "ok": true
+    },
+    {
+      "name": "future_peek_canceled_by_tnh",
+      "ok": true
+    },
+    {
+      "name": "future_peek_reveals_without_tnh",
+      "ok": true
+    },
+    {
+      "name": "paradox_swap_happy_path",
+      "ok": true
+    },
+    {
+      "name": "back_in_time_only_last_targetable",
+      "ok": true
+    },
+    {
+      "name": "local_reset_happy_path",
+      "ok": true
+    },
+    {
+      "name": "time_swap_happy_path",
+      "ok": true
+    },
+    {
+      "name": "present_discard_then_draw_flow",
+      "ok": true
+    },
+    {
+      "name": "deck_empty_winner_by_tiebreak",
+      "ok": true
+    }
+  ],
+  "fuzz": {
+    "ok": true,
+    "metrics": {
+      "matchesPlayed": 300,
+      "completedMatches": 300,
+      "totalSteps": 52593,
+      "maxStepsObserved": 349,
+      "phaseVisits": {
+        "PLAYER_CHOICE": 22195,
+        "REACTION_WINDOW": 16225,
+        "ACTION_SELECTION": 11283,
+        "DISCARD_SELECTION": 2590,
+        "GAME_OVER": 300
+      },
+      "actionCounts": {
+        "play_card": 14919,
+        "pass_reaction": 15186,
+        "select_future_target": 2878,
+        "draw_end_turn": 7276,
+        "select_action_target": 8405,
+        "cancel_reaction": 1039,
+        "discard_pending_event": 2590
+      },
+      "winners": {
+        "Bot 1": 89,
+        "Bot 3": 21,
+        "You": 108,
+        "Bot 2": 54,
+        "Bot 4": 18,
+        "Bot 5": 10
+      },
+      "playersCountDistribution": {
+        "2": 76,
+        "3": 55,
+        "4": 46,
+        "5": 53,
+        "6": 70
+      }
+    }
+  }
+}

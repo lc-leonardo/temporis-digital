@@ -1,0 +1,161 @@
+{
+  "game": {
+    "name": "Temporis",
+    "version": "1.0",
+    "modes": ["casual", "competitive"],
+    "description": "A strategic card game where players build personal timelines and manipulate events using action cards."
+  },
+
+  "card_types": {
+    "event": {
+      "eras": ["past", "present", "future", "paradox"]
+    },
+    "action": {
+      "play_limit_per_turn": 1
+    }
+  },
+
+  "setup": {
+    "standard": {
+      "starting_hand": 6,
+      "starting_timeline": 7
+    },
+    "long_mode": {
+      "starting_hand": 7,
+      "starting_timeline": 8
+    }
+  },
+
+  "turn_structure": {
+    "choice_required": true,
+    "options": {
+      "play_card": {
+        "description": "Play exactly one card from hand.",
+        "rules": {
+          "action_card": {
+            "effect": "Resolve immediately, then discard."
+          },
+          "event_card": {
+            "effect": "Place into timeline and resolve era-specific effects."
+          }
+        }
+      },
+      "draw_card": {
+        "description": "Draw one card and end the turn.",
+        "restrictions": [
+          "No card may be played this turn."
+        ]
+      }
+    }
+  },
+
+  "event_resolution": {
+    "past": {
+      "on_play": ["place_in_timeline", "discard_1", "draw_1"]
+    },
+    "present": {
+      "on_play": ["place_in_timeline", "discard_1", "draw_1"]
+    },
+    "future": {
+      "on_play": ["place_in_timeline"]
+    },
+    "paradox": {
+      "on_play": ["place_in_timeline"],
+      "counts_as_era": false
+    }
+  },
+
+  "hand_rules": {
+    "hand_limit": null
+  },
+
+  "timeline_rules": {
+    "ordering_required": false,
+    "counting_method": "era_count_only"
+  },
+
+  "paradox_rules": {
+    "scores_points": false,
+    "tie_breaker": {
+      "priority": 1,
+      "rule": "Fewer paradox cards is better"
+    }
+  },
+
+  "end_game_conditions": {
+    "conditions": [
+      "player_hand_empty",
+      "deck_empty_and_all_players_pass"
+    ]
+  },
+
+  "victory_conditions": {
+    "primary": "compare_era_counts",
+    "tie_breakers": [
+      "fewest_paradox_cards",
+      "fewest_cards_in_hand",
+      "shared_victory"
+    ]
+  },
+
+  "special_cards": {
+    "that_never_happened": {
+      "type": "action",
+      "can_cancel": ["action", "event"],
+      "timing": "reaction",
+      "restrictions": [
+        "cannot_cancel_scoring",
+        "cannot_cancel_end_game",
+        "cannot_cancel_passive_rules"
+      ],
+      "resolution": {
+        "effect": "Canceled card is discarded. No effects resolve."
+      }
+    },
+
+    "time_skip": {
+      "type": "action",
+      "multiplayer": {
+        "players_required": 3,
+        "effect": "next_player_skips_turn"
+      },
+      "one_vs_one": {
+        "players_required": 2,
+        "effect": "active_player_gains_extra_turn",
+        "restrictions": [
+          "one_card_per_turn",
+          "extra_turns_do_not_stack_unless_multiple_cards_resolve"
+        ]
+      }
+    }
+  },
+
+  "engine_model": {
+    "game_state": {
+      "players": [],
+      "current_player": null,
+      "deck": [],
+      "discard_pile": [],
+      "phase": "TURN_START"
+    },
+    "player_state": {
+      "hand": [],
+      "timeline": {
+        "past": 0,
+        "present": 0,
+        "future": 0,
+        "paradox": 0
+      }
+    },
+    "turn_phases": [
+      "TURN_START",
+      "PLAYER_CHOICE",
+      "RESOLUTION",
+      "TURN_END"
+    ],
+    "reaction_window": {
+      "trigger": "card_played",
+      "allowed_cards": ["that_never_happened"]
+    }
+  }
+}
