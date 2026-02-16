@@ -104,7 +104,7 @@ function redactDrawDetails(text: string): string {
     match[0] === 'D' ? 'Draw failed (deck empty)' : 'draw failed (deck empty)',
   )
 
-  redacted = redacted.replace(/\b[Dd]rew\s+([^\.\]]+)(?=\.|\]|$)/g, (full, captured: string) => {
+  redacted = redacted.replace(/\b[Dd]rew\s+([^.\]]+)(?=\.|\]|$)/g, (full, captured: string) => {
     const normalized = captured.trim().toLowerCase()
     if (
       normalized.startsWith('1 card') ||

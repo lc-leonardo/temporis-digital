@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import './App.css'
 import CardImage from './components/CardImage'
 import {
   applyGameAction,
   canCurrentReactorCancel,
   createInitialGame,
+  getCardDefinition,
   getSelectableActionTargets,
 } from './game/engine'
 import type { GameAction, GameState, TemporisRules } from './game/types'
@@ -24,6 +25,21 @@ const ACTION_TABLE_PREVIEW_DURATION_MS = 1800
 const PROJECTILE_CLEANUP_MS = 820
 const USER_ACTION_LOCK_MS = 900
 type Locale = 'en' | 'pt'
+
+type AppCssVars = CSSProperties & {
+  '--fan-drop'?: string
+  '--fan-rotation'?: string
+  '--fan-z'?: number
+  '--seat-left'?: string
+  '--seat-top'?: string
+  '--cascade-index'?: number
+  '--from-x'?: string
+  '--from-y'?: string
+  '--to-x'?: string
+  '--to-y'?: string
+  '--hand-card-width'?: string
+  '--fan-overlap'?: string
+}
 
 function getCardDisplayName(cardId: number, locale: Locale = 'en'): string {
   const label =
@@ -102,6 +118,320 @@ const CARD_GROUP_ORDER: Record<string, number> = {
   other: 10,
 }
 
+type HomeView = 'setup' | 'rules'
+
+type TutorialStep = {
+  actor: 'player' | 'bot'
+  action: GameAction
+  hintEn: string
+  hintPt: string
+}
+
+const TUTORIAL_STEPS: TutorialStep[] = [
+  {
+    actor: 'player',
+    action: { type: 'play_card', cardId: 1 },
+    hintEn: 'Play Past Event (#1) from your hand.',
+    hintPt: 'Jogue o Evento do Passado (#1) da sua mão.',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'pass_reaction' },
+    hintEn: 'Bot will pass reaction so your event resolves.',
+    hintPt: 'O bot vai passar a reação para seu evento resolver.',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'play_card', cardId: 23 },
+    hintEn: 'Bot plays a Present Event to open a reaction window.',
+    hintPt: 'O bot joga um Evento do Presente para abrir janela de reação.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'cancel_reaction' },
+    hintEn: 'Use That Never Happened now (reaction emphasis).',
+    hintPt: 'Use Isso Nunca Aconteceu agora (ênfase na reação).',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'pass_reaction' },
+    hintEn: 'Bot passes and the canceled card stays canceled.',
+    hintPt: 'O bot passa e a carta cancelada permanece cancelada.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'play_card', cardId: 21 },
+    hintEn: 'Play Present Event (#21).',
+    hintPt: 'Jogue o Evento do Presente (#21).',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'pass_reaction' },
+    hintEn: 'Bot passes reaction.',
+    hintPt: 'O bot passa a reação.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'discard_pending_event', cardId: 22 },
+    hintEn: 'Discard card #22 to resolve Present Event.',
+    hintPt: 'Descarte a carta #22 para resolver Evento do Presente.',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'draw_end_turn' },
+    hintEn: 'Bot draws and ends turn.',
+    hintPt: 'O bot compra e encerra o turno.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'play_card', cardId: 41 },
+    hintEn: 'Play Future Event (#41).',
+    hintPt: 'Jogue o Evento do Futuro (#41).',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'pass_reaction' },
+    hintEn: 'Bot passes reaction to the Future Event.',
+    hintPt: 'O bot passa a reação ao Evento do Futuro.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'select_future_target', targetPlayerIndex: 1 },
+    hintEn: 'Choose the bot as target for Future hand reveal.',
+    hintPt: 'Escolha o bot como alvo da revelação de mão do Futuro.',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'pass_reaction' },
+    hintEn: 'Bot passes TNH reaction to Future reveal effect.',
+    hintPt: 'O bot passa a reação de INC ao efeito de revelação do Futuro.',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'play_card', cardId: 2 },
+    hintEn: 'Bot plays Past Event.',
+    hintPt: 'O bot joga Evento do Passado.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'pass_reaction' },
+    hintEn: 'Pass reaction.',
+    hintPt: 'Passe a reação.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'play_card', cardId: 61 },
+    hintEn: 'Play Paradox Event (#61).',
+    hintPt: 'Jogue o Evento Paradoxo (#61).',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'pass_reaction' },
+    hintEn: 'Bot passes reaction.',
+    hintPt: 'O bot passa a reação.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'select_action_target', cardId: 1 },
+    hintEn: 'Choose your timeline card #1 as Paradox source.',
+    hintPt: 'Escolha sua carta #1 da timeline como origem do Paradoxo.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'select_future_target', targetPlayerIndex: 1 },
+    hintEn: 'Choose bot as Paradox target.',
+    hintPt: 'Escolha o bot como alvo do Paradoxo.',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'draw_end_turn' },
+    hintEn: 'Bot draws and ends turn.',
+    hintPt: 'O bot compra e encerra o turno.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'play_card', cardId: 93 },
+    hintEn: 'Play Rewrite Event (#93).',
+    hintPt: 'Jogue Reescrever Evento (#93).',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'pass_reaction' },
+    hintEn: 'Bot passes reaction.',
+    hintPt: 'O bot passa a reação.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'select_action_target', cardId: 21 },
+    hintEn: 'Select timeline card #21 to rewrite.',
+    hintPt: 'Selecione a carta #21 da timeline para reescrever.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'select_action_target', cardId: 42 },
+    hintEn: 'Select Event #42 from hand as replacement.',
+    hintPt: 'Selecione o Evento #42 da mão como substituto.',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'draw_end_turn' },
+    hintEn: 'Bot draws and ends turn.',
+    hintPt: 'O bot compra e encerra o turno.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'play_card', cardId: 113 },
+    hintEn: 'Play Time Swap (#113).',
+    hintPt: 'Jogue Troca Temporal (#113).',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'pass_reaction' },
+    hintEn: 'Bot passes reaction.',
+    hintPt: 'O bot passa a reação.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'select_action_target', cardId: 42 },
+    hintEn: 'Choose your timeline card #42 as Time Swap source.',
+    hintPt: 'Escolha sua carta #42 da timeline como origem da Troca Temporal.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'select_action_target', cardId: 24 },
+    hintEn: 'Choose bot timeline card #24 as Time Swap target.',
+    hintPt: 'Escolha a carta #24 da timeline do bot como alvo da Troca Temporal.',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'draw_end_turn' },
+    hintEn: 'Bot draws and ends turn.',
+    hintPt: 'O bot compra e encerra o turno.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'play_card', cardId: 75 },
+    hintEn: 'Play Back in Time (#75).',
+    hintPt: 'Jogue Volta no Tempo (#75).',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'pass_reaction' },
+    hintEn: 'Bot passes reaction.',
+    hintPt: 'O bot passa a reação.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'select_action_target', cardId: 42 },
+    hintEn: 'Select last timeline card #42 to return to owner hand.',
+    hintPt: 'Selecione a última carta #42 da timeline para voltar à mão do dono.',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'draw_end_turn' },
+    hintEn: 'Bot draws and ends turn.',
+    hintPt: 'O bot compra e encerra o turno.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'play_card', cardId: 99 },
+    hintEn: 'Play Local Reset (#99).',
+    hintPt: 'Jogue Reset Local (#99).',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'pass_reaction' },
+    hintEn: 'Bot passes reaction.',
+    hintPt: 'O bot passa a reação.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'select_action_target', cardId: 2 },
+    hintEn: 'Select card #2 in timeline to discard with Local Reset.',
+    hintPt: 'Selecione a carta #2 da timeline para descartar com Reset Local.',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'draw_end_turn' },
+    hintEn: 'Bot draws and ends turn.',
+    hintPt: 'O bot compra e encerra o turno.',
+  },
+  {
+    actor: 'player',
+    action: { type: 'play_card', cardId: 107 },
+    hintEn: 'Play Time Skip (#107) to finish tutorial.',
+    hintPt: 'Jogue Pular Tempo (#107) para finalizar o tutorial.',
+  },
+  {
+    actor: 'bot',
+    action: { type: 'pass_reaction' },
+    hintEn: 'Bot passes reaction and tutorial is complete.',
+    hintPt: 'O bot passa a reação e o tutorial é concluído.',
+  },
+]
+
+function matchesTutorialAction(expected: GameAction, actual: GameAction): boolean {
+  if (expected.type !== actual.type) {
+    return false
+  }
+
+  if (expected.type === 'play_card' && actual.type === 'play_card') {
+    return expected.cardId === actual.cardId
+  }
+  if (expected.type === 'discard_pending_event' && actual.type === 'discard_pending_event') {
+    return expected.cardId === actual.cardId
+  }
+  if (expected.type === 'select_action_target' && actual.type === 'select_action_target') {
+    return expected.cardId === actual.cardId
+  }
+  if (expected.type === 'select_future_target' && actual.type === 'select_future_target') {
+    return expected.targetPlayerIndex === actual.targetPlayerIndex
+  }
+
+  return true
+}
+
+function buildTutorialGameState(): GameState {
+  const playerHand = [1, 21, 22, 41, 42, 61, 75, 85, 93, 99, 107, 113]
+  const botHand = [2, 23, 24, 43, 86]
+
+  const usedCards = new Set<number>([...playerHand, ...botHand, 24])
+  const deck = ALL_CARD_IDS.filter((cardId) => !usedCards.has(cardId))
+
+  return {
+    timelineTarget: 7,
+    deck,
+    discardPile: [],
+    players: [
+      {
+        id: 1,
+        name: 'You',
+        isBot: false,
+        hand: [...playerHand],
+        timeline: [],
+      },
+      {
+        id: 2,
+        name: 'Chrono Bot',
+        isBot: true,
+        hand: [...botHand],
+        timeline: [{ id: 24, era: getCardDefinition(24).era ?? 'present' }],
+      },
+    ],
+    currentPlayerIndex: 0,
+    phase: 'PLAYER_CHOICE',
+    pendingPlay: null,
+    pendingDiscard: null,
+    pendingActionSelection: null,
+    pendingFuturePeek: null,
+    pendingForcedSkips: null,
+    lastFutureReveal: null,
+    reactionHistory: [],
+    statusText: 'Tutorial started. Follow the scripted steps to learn all card types and action cards.',
+    winner: null,
+  }
+}
+
 function getEraPoints(game: GameState, playerIndex: number) {
   return game.players[playerIndex].timeline.filter((entry) => entry.era !== 'paradox').length
 }
@@ -166,7 +496,7 @@ function redactDrawDetails(text: string): string {
     match[0] === 'D' ? 'Draw failed (deck empty)' : 'draw failed (deck empty)',
   )
 
-  redacted = redacted.replace(/\b[Dd]rew\s+([^\.\]]+)(?=\.|\]|$)/g, (full, captured: string) => {
+  redacted = redacted.replace(/\b[Dd]rew\s+([^.\]]+)(?=\.|\]|$)/g, (full, captured: string) => {
     const normalized = captured.trim().toLowerCase()
     if (
       normalized.startsWith('1 card') ||
@@ -444,6 +774,7 @@ function maskFutureRevealForViewer(game: GameState, viewerPlayerIndex: number): 
 }
 
 function App() {
+  const [homeView, setHomeView] = useState<HomeView>('setup')
   const [language, setLanguage] = useState<Locale>(() => {
     if (typeof window === 'undefined') {
       return 'en'
@@ -549,6 +880,12 @@ function App() {
   const [logFilter, setLogFilter] = useState<'current' | 'all'>('current')
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
   const [chatNotification, setChatNotification] = useState<string | null>(null)
+  const [currentTurnNumber, setCurrentTurnNumber] = useState<number>(1)
+  const [tutorialActive, setTutorialActive] = useState<boolean>(false)
+  const [tutorialCompleted, setTutorialCompleted] = useState<boolean>(false)
+  const [tutorialStepIndex, setTutorialStepIndex] = useState<number>(0)
+  const [tutorialHintFeedback, setTutorialHintFeedback] = useState<string | null>(null)
+  const tutorialStepIndexRef = useRef<number>(0)
   const previousTimelineTailByPlayer = useRef<Record<number, string>>({})
   const gameRef = useRef<GameState | null>(null)
   const lastFutureRevealSignatureRef = useRef<string>('')
@@ -743,7 +1080,7 @@ function App() {
                     entry !== null &&
                     Number.isInteger((entry as { playerIndex?: unknown }).playerIndex),
                 )
-                .map((entry: any) => ({
+                .map((entry: { playerIndex: unknown; nickname?: unknown; accept?: unknown }) => ({
                   playerIndex: Number(entry.playerIndex),
                   nickname: String(entry.nickname ?? 'Player'),
                   accept: typeof entry.accept === 'boolean' ? entry.accept : null,
@@ -967,13 +1304,13 @@ function App() {
     setNetworkSocket(socket)
   }
 
-  const sendLanMessage = (message: Record<string, unknown>) => {
+  const sendLanMessage = useCallback((message: Record<string, unknown>) => {
     if (!networkSocket || networkSocket.readyState !== WebSocket.OPEN) {
       setNetworkError('Connect to the LAN server first.')
       return
     }
     networkSocket.send(JSON.stringify(message))
-  }
+  }, [networkSocket])
 
   const requestSnapshot = () => {
     if (!networkMatchActive) {
@@ -1114,6 +1451,7 @@ function App() {
       chatToastTimeoutRef.current = null
     }
     turnCounterRef.current = 1
+    setCurrentTurnNumber(1)
     previousChatCountRef.current = 0
     previousTurnPlayerRef.current = null
     setShowFutureReveal(false)
@@ -1135,7 +1473,7 @@ function App() {
     }
   }
 
-  const pushTurnLog = (
+  const pushTurnLog = useCallback((
     gameBefore: GameState | null,
     action: GameAction,
     actorNameOverride?: string,
@@ -1152,7 +1490,7 @@ function App() {
     const line = `T${turnCounterRef.current} • ${actorName} ${describeAction(action)}${outcome}`
     const id = `${timestamp}-${Math.random().toString(36).slice(2, 7)}`
     setActionTurnLog((prev) => [{ id, turn: turnCounterRef.current, text: line, timestamp }, ...prev].slice(0, 80))
-  }
+  }, [])
 
   const pushChatMessage = (sender: string, text: string, timestamp: number = Date.now()) => {
     const message = text.trim()
@@ -1163,7 +1501,7 @@ function App() {
     setChatMessages((prev) => [...prev.slice(-79), { id, sender, text: message, timestamp }])
   }
 
-  const markRecentAction = (
+  const markRecentAction = useCallback((
     playerIndex: number,
     action: GameAction,
     gameBefore?: GameState | null,
@@ -1293,7 +1631,7 @@ function App() {
       targetCardId: action.cardId,
       direction,
     })
-  }
+  }, [language, localPlayerIndex, networkMatchActive])
 
   useEffect(() => {
     if (!recentPlayerAction) {
@@ -1331,6 +1669,11 @@ function App() {
     return () => window.clearTimeout(timeoutId)
   }, [drawnCardFlashId])
 
+  const timelineLengthSignature = useMemo(
+    () => (game ? game.players.map((player) => player.timeline.length).join('|') : ''),
+    [game],
+  )
+
   useEffect(() => {
     if (!tableBoardRef.current || !game) {
       return
@@ -1341,7 +1684,7 @@ function App() {
     timelineContainers.forEach((container) => {
       container.scrollLeft = container.scrollWidth
     })
-  }, [game?.players.map((player) => player.timeline.length).join('|')])
+  }, [game, timelineLengthSignature])
 
   useEffect(() => {
     if (!timelineTargetCue) {
@@ -1586,9 +1929,10 @@ function App() {
 
     if (game.currentPlayerIndex !== previousTurnPlayerRef.current) {
       turnCounterRef.current += 1
+      setCurrentTurnNumber(turnCounterRef.current)
       previousTurnPlayerRef.current = game.currentPlayerIndex
     }
-  }, [game?.currentPlayerIndex])
+  }, [game])
 
   useEffect(() => {
     if (!game?.lastFutureReveal) {
@@ -1633,6 +1977,147 @@ function App() {
       window.clearTimeout(timeoutId)
     }
   }, [showFutureReveal, futureRevealCycle])
+
+  useEffect(() => {
+    if (!game) {
+      return
+    }
+
+    const currentTail: Record<number, string> = {}
+    let newFlashKey: string | null = null
+    let removalFlashIndex: number | null = null
+
+    game.players.forEach((player, index) => {
+      const lastEntry = player.timeline[player.timeline.length - 1]
+      const signature = `${player.timeline.length}:${lastEntry?.id ?? 'none'}`
+      currentTail[index] = signature
+
+      const previous = previousTimelineTailByPlayer.current[index]
+      if (previous) {
+        const previousLength = Number(previous.split(':')[0] ?? 0)
+        if (player.timeline.length < previousLength) {
+          removalFlashIndex = index
+        }
+      }
+
+      if (previous && previous !== signature && lastEntry) {
+        newFlashKey = `${index}-${lastEntry.id}`
+      }
+    })
+
+    if (isFutureRevealWindowActive) {
+      previousTimelineTailByPlayer.current = currentTail
+      return
+    }
+
+    previousTimelineTailByPlayer.current = currentTail
+
+    if (newFlashKey || removalFlashIndex !== null) {
+      if (removalFlashIndex !== null) {
+        setTimelineRemovalFlashPlayerIndex(removalFlashIndex)
+      }
+
+      setTimelineEntryFlashKey(newFlashKey)
+      const timeoutId = window.setTimeout(() => {
+        setTimelineEntryFlashKey(null)
+        setTimelineRemovalFlashPlayerIndex(null)
+      }, 700)
+      return () => window.clearTimeout(timeoutId)
+    }
+  }, [game, isFutureRevealWindowActive])
+
+  const dispatchGameAction = useCallback((
+    action: GameAction,
+    options?: {
+      proxyNickname?: string
+      bypassUserInputLock?: boolean
+      onApplied?: (applied: boolean) => void
+    },
+  ) => {
+    if (!rules) {
+      return
+    }
+
+    if (isFutureRevealWindowActive) {
+      return
+    }
+
+    const bypassUserInputLock = Boolean(options?.bypassUserInputLock)
+    const unlockUserActionInput = () => {
+      userActionLockRef.current = false
+      if (userActionLockTimeoutRef.current !== null) {
+        window.clearTimeout(userActionLockTimeoutRef.current)
+        userActionLockTimeoutRef.current = null
+      }
+    }
+
+    if (!bypassUserInputLock && userActionLockRef.current) {
+      return
+    }
+
+    if (!bypassUserInputLock) {
+      userActionLockRef.current = true
+      if (userActionLockTimeoutRef.current !== null) {
+        window.clearTimeout(userActionLockTimeoutRef.current)
+      }
+      userActionLockTimeoutRef.current = window.setTimeout(() => {
+        userActionLockRef.current = false
+        userActionLockTimeoutRef.current = null
+      }, USER_ACTION_LOCK_MS)
+    }
+
+    const networkAction: GameAction =
+      (action.type === 'cancel_reaction' || action.type === 'pass_reaction') && localPlayerIndex >= 0
+        ? { ...action, playerIndex: localPlayerIndex }
+        : action
+
+    if (networkMatchActive && roomInfo) {
+      const canHostProxyDisconnectedSeat = isLocalHost && isDisconnectedSeatTurn
+      const canIssueReactionCancel = action.type === 'cancel_reaction' && canLocalCancelReactionNow
+      const canIssueReactionPass = action.type === 'pass_reaction' && isReactionTimerOwner
+      if (!isLocalController && !canHostProxyDisconnectedSeat && !canIssueReactionCancel && !canIssueReactionPass) {
+        if (!bypassUserInputLock) {
+          unlockUserActionInput()
+        }
+        return
+      }
+      sendLanMessage({ type: 'game_action_request', action: networkAction, meta: options ?? null })
+      options?.onApplied?.(true)
+      return
+    }
+
+    setGame((current) => {
+      if (!current) {
+        if (!bypassUserInputLock) {
+          unlockUserActionInput()
+        }
+        return current
+      }
+      const updated = applyGameAction(current, rules, networkAction)
+      const applied = updated !== current
+      if (updated === current && !bypassUserInputLock) {
+        unlockUserActionInput()
+      }
+      markRecentAction(current.currentPlayerIndex, networkAction, current, updated)
+      pushTurnLog(current, networkAction, undefined, updated)
+      options?.onApplied?.(applied)
+      return updated
+    })
+  }, [
+    canLocalCancelReactionNow,
+    isDisconnectedSeatTurn,
+    isFutureRevealWindowActive,
+    isLocalController,
+    isLocalHost,
+    isReactionTimerOwner,
+    localPlayerIndex,
+    markRecentAction,
+    networkMatchActive,
+    pushTurnLog,
+    roomInfo,
+    rules,
+    sendLanMessage,
+  ])
 
   useEffect(() => {
     if (!game || !rules) {
@@ -1690,130 +2175,7 @@ function App() {
       }
       window.clearTimeout(timeoutId)
     }
-  }, [game, rules, isReactionTimerOwner, isFutureRevealWindowActive])
-
-  useEffect(() => {
-    if (!game) {
-      return
-    }
-
-    const currentTail: Record<number, string> = {}
-    let newFlashKey: string | null = null
-    let removalFlashIndex: number | null = null
-
-    game.players.forEach((player, index) => {
-      const lastEntry = player.timeline[player.timeline.length - 1]
-      const signature = `${player.timeline.length}:${lastEntry?.id ?? 'none'}`
-      currentTail[index] = signature
-
-      const previous = previousTimelineTailByPlayer.current[index]
-      if (previous) {
-        const previousLength = Number(previous.split(':')[0] ?? 0)
-        if (player.timeline.length < previousLength) {
-          removalFlashIndex = index
-        }
-      }
-
-      if (previous && previous !== signature && lastEntry) {
-        newFlashKey = `${index}-${lastEntry.id}`
-      }
-    })
-
-    if (isFutureRevealWindowActive) {
-      previousTimelineTailByPlayer.current = currentTail
-      return
-    }
-
-    previousTimelineTailByPlayer.current = currentTail
-
-    if (newFlashKey || removalFlashIndex !== null) {
-      if (removalFlashIndex !== null) {
-        setTimelineRemovalFlashPlayerIndex(removalFlashIndex)
-      }
-
-      setTimelineEntryFlashKey(newFlashKey)
-      const timeoutId = window.setTimeout(() => {
-        setTimelineEntryFlashKey(null)
-        setTimelineRemovalFlashPlayerIndex(null)
-      }, 700)
-      return () => window.clearTimeout(timeoutId)
-    }
-  }, [game, isFutureRevealWindowActive])
-
-  const dispatchGameAction = (
-    action: GameAction,
-    options?: {
-      proxyNickname?: string
-      bypassUserInputLock?: boolean
-    },
-  ) => {
-    if (!rules) {
-      return
-    }
-
-    if (isFutureRevealWindowActive) {
-      return
-    }
-
-    const bypassUserInputLock = Boolean(options?.bypassUserInputLock)
-    const unlockUserActionInput = () => {
-      userActionLockRef.current = false
-      if (userActionLockTimeoutRef.current !== null) {
-        window.clearTimeout(userActionLockTimeoutRef.current)
-        userActionLockTimeoutRef.current = null
-      }
-    }
-
-    if (!bypassUserInputLock && userActionLockRef.current) {
-      return
-    }
-
-    if (!bypassUserInputLock) {
-      userActionLockRef.current = true
-      if (userActionLockTimeoutRef.current !== null) {
-        window.clearTimeout(userActionLockTimeoutRef.current)
-      }
-      userActionLockTimeoutRef.current = window.setTimeout(() => {
-        userActionLockRef.current = false
-        userActionLockTimeoutRef.current = null
-      }, USER_ACTION_LOCK_MS)
-    }
-
-    const networkAction: GameAction =
-      (action.type === 'cancel_reaction' || action.type === 'pass_reaction') && localPlayerIndex >= 0
-        ? { ...action, playerIndex: localPlayerIndex }
-        : action
-
-    if (networkMatchActive && roomInfo) {
-      const canHostProxyDisconnectedSeat = isLocalHost && isDisconnectedSeatTurn
-      const canIssueReactionCancel = action.type === 'cancel_reaction' && canLocalCancelReactionNow
-      const canIssueReactionPass = action.type === 'pass_reaction' && isReactionTimerOwner
-      if (!isLocalController && !canHostProxyDisconnectedSeat && !canIssueReactionCancel && !canIssueReactionPass) {
-        if (!bypassUserInputLock) {
-          unlockUserActionInput()
-        }
-        return
-      }
-      sendLanMessage({ type: 'game_action_request', action: networkAction, meta: options ?? null })
-      return
-    }
-
-    setGame((current) => {
-      if (!current) {
-        if (!bypassUserInputLock) {
-          unlockUserActionInput()
-        }
-        return current
-      }
-      const updated = applyGameAction(current, rules, networkAction)
-      if (updated === current && !bypassUserInputLock) {
-        unlockUserActionInput()
-      }
-      markRecentAction(current.currentPlayerIndex, networkAction, current, updated)
-      pushTurnLog(current, networkAction, undefined, updated)
-      return updated
-    })
-  }
+  }, [game, rules, isReactionTimerOwner, isFutureRevealWindowActive, dispatchGameAction])
 
   useEffect(() => {
     if (!userActionLockRef.current) {
@@ -1835,7 +2197,73 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!game || !rules || !activePlayer || game.winner || !activePlayer.isBot || networkMatchActive || isFutureRevealWindowActive) {
+    tutorialStepIndexRef.current = tutorialStepIndex
+  }, [tutorialStepIndex])
+
+  useEffect(() => {
+    if (!tutorialActive || tutorialCompleted || !game || !rules || networkMatchActive || isFutureRevealWindowActive) {
+      return
+    }
+
+    const scheduledStepIndex = tutorialStepIndexRef.current
+    const step = TUTORIAL_STEPS[scheduledStepIndex]
+    if (!step || step.actor !== 'bot') {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const liveStepIndex = tutorialStepIndexRef.current
+      if (liveStepIndex !== scheduledStepIndex) {
+        return
+      }
+
+      const liveStep = TUTORIAL_STEPS[liveStepIndex]
+      if (!liveStep || liveStep.actor !== 'bot' || !matchesTutorialAction(liveStep.action, step.action)) {
+        return
+      }
+
+      dispatchGameAction(step.action, {
+        bypassUserInputLock: true,
+        onApplied: (applied) => {
+          if (!applied) {
+            return
+          }
+
+          setTutorialHintFeedback(null)
+          const next = liveStepIndex + 1
+          if (next >= TUTORIAL_STEPS.length) {
+            setTutorialCompleted(true)
+            return
+          }
+
+          tutorialStepIndexRef.current = next
+          setTutorialStepIndex((current) => (current === liveStepIndex ? next : current))
+        },
+      })
+    }, 820)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [
+    tutorialActive,
+    tutorialCompleted,
+    game,
+    rules,
+    networkMatchActive,
+    isFutureRevealWindowActive,
+    dispatchGameAction,
+  ])
+
+  useEffect(() => {
+    if (
+      !game ||
+      !rules ||
+      !activePlayer ||
+      game.winner ||
+      !activePlayer.isBot ||
+      networkMatchActive ||
+      isFutureRevealWindowActive ||
+      (tutorialActive && !tutorialCompleted)
+    ) {
       return
     }
 
@@ -1932,7 +2360,17 @@ function App() {
     }, 950)
 
     return () => window.clearTimeout(timeoutId)
-  }, [game, rules, activePlayer, networkMatchActive, isFutureRevealWindowActive])
+  }, [
+    activePlayer,
+    game,
+    isFutureRevealWindowActive,
+    markRecentAction,
+    networkMatchActive,
+    pushTurnLog,
+    rules,
+    tutorialActive,
+    tutorialCompleted,
+  ])
 
   useEffect(() => {
     if (!game || !rules || !networkMatchActive || !roomInfo || game.winner || isFutureRevealWindowActive) {
@@ -2001,7 +2439,16 @@ function App() {
     }, 1100)
 
     return () => window.clearTimeout(timeoutId)
-  }, [game, rules, networkMatchActive, roomInfo, isLocalHost, isDisconnectedSeatTurn, isFutureRevealWindowActive])
+  }, [
+    dispatchGameAction,
+    game,
+    isDisconnectedSeatTurn,
+    isFutureRevealWindowActive,
+    isLocalHost,
+    networkMatchActive,
+    roomInfo,
+    rules,
+  ])
 
   if (!rules) {
     return (
@@ -2113,6 +2560,120 @@ function App() {
       )
     }
 
+    if (homeView === 'rules') {
+      return (
+        <main className="app-shell app-home">
+          <section className="home-hero">
+            <div className="home-hero-copy">
+              <h1>{rules.game.name}</h1>
+              <p>{language === 'pt' ? 'Regras completas do jogo' : 'Complete game rules'}</p>
+            </div>
+            <div className="home-hero-badges">
+              <span className="home-chip">
+                <span className="ui-icon chip-phase" aria-hidden="true" />
+                {language === 'pt' ? 'Versão' : 'Version'}: {rules.game.version}
+              </span>
+            </div>
+          </section>
+
+          <section className="home-grid single rules-page-grid">
+            <article className="status-panel setup-card">
+              <div className="setup-card-title-row">
+                <h2>{language === 'pt' ? 'Visão Geral' : 'Overview'}</h2>
+              </div>
+              <p className="rules-copy">{rules.game.description}</p>
+              <ul className="rules-list">
+                <li>
+                  {language === 'pt'
+                    ? 'Objetivo: terminar com mais Eventos de era (Passado/Presente/Futuro) na timeline.'
+                    : 'Goal: finish with the highest era Event count (Past/Present/Future) in timeline.'}
+                </li>
+                <li>
+                  {language === 'pt'
+                    ? 'Paradoxo não conta ponto de era e pode desempatar negativamente.'
+                    : 'Paradox does not score era points and may hurt tie-breakers.'}
+                </li>
+                <li>
+                  {language === 'pt'
+                    ? 'No turno, escolha exatamente 1 ação: jogar 1 carta ou comprar 1 carta.'
+                    : 'On your turn, choose exactly 1 action: play 1 card or draw 1 card.'}
+                </li>
+              </ul>
+            </article>
+
+            <article className="status-panel setup-card">
+              <div className="setup-card-title-row">
+                <h2>{language === 'pt' ? 'Tipos de Carta' : 'Card Types'}</h2>
+              </div>
+              <ul className="rules-list">
+                <li>{language === 'pt' ? 'Evento do Passado (#1-20): entra na timeline e compra 1.' : 'Past Event (#1-20): enters timeline and draws 1.'}</li>
+                <li>{language === 'pt' ? 'Evento do Presente (#21-40): entra na timeline, descarte 1 e compre 1.' : 'Present Event (#21-40): enters timeline, discard 1 and draw 1.'}</li>
+                <li>{language === 'pt' ? 'Evento do Futuro (#41-60): entra na timeline e permite revelar mão de oponente.' : 'Future Event (#41-60): enters timeline and enables opponent hand reveal.'}</li>
+                <li>{language === 'pt' ? 'Evento Paradoxo (#61-74): entra na timeline e faz troca oculta com mão de oponente.' : 'Paradox Event (#61-74): enters timeline and performs hidden swap with opponent hand.'}</li>
+                <li>{language === 'pt' ? 'Ações (#75-120): efeitos táticos imediatos (Volta no Tempo, INC, Reescrever, Reset, Pular, Troca).' : 'Actions (#75-120): immediate tactical effects (Back in Time, TNH, Rewrite, Reset, Skip, Swap).'}</li>
+              </ul>
+            </article>
+
+            <article className="status-panel setup-card">
+              <div className="setup-card-title-row">
+                <h2>{language === 'pt' ? 'Janela de Reação (TNH)' : 'Reaction Window (TNH)'}</h2>
+              </div>
+              <ul className="rules-list">
+                <li>
+                  {language === 'pt'
+                    ? 'Após uma carta ser jogada, abre janela de reação para Isso Nunca Aconteceu (TNH).'
+                    : 'After a card is played, a reaction window opens for That Never Happened (TNH).'}
+                </li>
+                <li>
+                  {language === 'pt'
+                    ? 'TNH é apenas reação: não pode ser jogado normalmente no próprio turno.'
+                    : 'TNH is reaction-only: it cannot be played as a normal turn action.'}
+                </li>
+                <li>
+                  {language === 'pt'
+                    ? 'Cadeia de TNH alterna cancelamentos; o resultado final depende da paridade da cadeia.'
+                    : 'TNH chain alternates cancelations; final outcome depends on chain parity.'}
+                </li>
+              </ul>
+            </article>
+
+            <article className="status-panel setup-card">
+              <div className="setup-card-title-row">
+                <h2>{language === 'pt' ? 'Ações e Alvos' : 'Actions and Targets'}</h2>
+              </div>
+              <ul className="rules-list">
+                <li>{language === 'pt' ? 'Volta no Tempo: devolve a última carta de uma timeline para a mão do dono.' : 'Back in Time: returns the last card of a timeline to its owner hand.'}</li>
+                <li>{language === 'pt' ? 'Reset Local: descarta 1 carta de qualquer timeline.' : 'Local Reset: discards 1 card from any timeline.'}</li>
+                <li>{language === 'pt' ? 'Reescrever Evento: substitui carta da sua timeline por um Evento da sua mão.' : 'Rewrite Event: replaces one card in your timeline with an Event from your hand.'}</li>
+                <li>{language === 'pt' ? 'Troca Temporal: troca 1 Evento da sua timeline com 1 Evento da timeline de outro jogador.' : 'Time Swap: swaps one Event from your timeline with one Event from another timeline.'}</li>
+                <li>{language === 'pt' ? 'Pular Tempo: no 1v1 concede novo turno; em multiplayer faz próximo jogador pular.' : 'Time Skip: in 1v1 grants extra turn; in multiplayer skips next player.'}</li>
+              </ul>
+            </article>
+
+            <article className="status-panel setup-card">
+              <div className="setup-card-title-row">
+                <h2>{language === 'pt' ? 'Fim de Jogo e Vitória' : 'Endgame and Victory'}</h2>
+              </div>
+              <ul className="rules-list">
+                <li>{language === 'pt' ? 'Fim quando alguém zera a mão ou quando não há mais progresso possível.' : 'Game ends when someone empties hand or no further progress is possible.'}</li>
+                <li>{language === 'pt' ? 'Vitória por maior contagem de eras na timeline (sem Paradoxo).' : 'Victory by highest timeline era count (excluding Paradox).'} </li>
+                <li>{language === 'pt' ? 'Desempates: menos Paradoxos, menos cartas na mão, depois empate.' : 'Tie-breakers: fewer Paradox cards, fewer hand cards, then shared victory.'}</li>
+              </ul>
+
+              <div className="actions" style={{ marginTop: '0.85rem' }}>
+                <button type="button" onClick={() => setHomeView('setup')}>
+                  {language === 'pt' ? 'Voltar' : 'Back'}
+                </button>
+                <button type="button" onClick={startGuidedTutorial}>
+                  {language === 'pt' ? 'Iniciar Tutorial Guiado' : 'Start Guided Tutorial'}
+                </button>
+              </div>
+            </article>
+          </section>
+        </main>
+      )
+    }
+
     return (
       <main className="app-shell app-home">
         <section className="home-hero">
@@ -2179,6 +2740,10 @@ function App() {
                 type="button"
                 onClick={() => {
                   resetMatchUiState()
+                  setTutorialActive(false)
+                  setTutorialCompleted(false)
+                  setTutorialStepIndex(0)
+                  setTutorialHintFeedback(null)
                   setGame(
                     createInitialGame({
                       startingHand: rules.setup.standard.starting_hand,
@@ -2190,6 +2755,12 @@ function App() {
                 }}
               >
                 {language === 'pt' ? 'Iniciar Partida' : 'Start Match'}
+              </button>
+              <button type="button" onClick={startGuidedTutorial}>
+                {language === 'pt' ? 'Tutorial Guiado' : 'Guided Tutorial'}
+              </button>
+              <button type="button" onClick={() => setHomeView('rules')}>
+                {language === 'pt' ? 'Ver Regras' : 'View Rules'}
               </button>
             </div>
           </article>
@@ -2332,15 +2903,113 @@ function App() {
     )
   }
 
+  const tutorialStep = tutorialActive && !tutorialCompleted ? TUTORIAL_STEPS[tutorialStepIndex] ?? null : null
+  const tutorialHint = tutorialStep
+    ? language === 'pt'
+      ? tutorialStep.hintPt
+      : tutorialStep.hintEn
+    : tutorialCompleted
+      ? language === 'pt'
+        ? 'Tutorial concluído! Você já viu todos os tipos de carta e ações.'
+        : 'Tutorial completed! You have seen all card types and action flows.'
+      : null
+
+  function startGuidedTutorial() {
+    resetMatchUiState()
+    setHomeView('setup')
+    setTutorialActive(true)
+    setTutorialCompleted(false)
+    setTutorialStepIndex(0)
+    tutorialStepIndexRef.current = 0
+    setTutorialHintFeedback(null)
+    setTotalPlayers(2)
+    setNetworkMatchActive(false)
+    setLocalPlayerIndex(0)
+    setGame(buildTutorialGameState())
+  }
+
+  function exitGuidedTutorialToHome() {
+    setTutorialActive(false)
+    setTutorialCompleted(false)
+    setTutorialStepIndex(0)
+    tutorialStepIndexRef.current = 0
+    setTutorialHintFeedback(null)
+    setGame(null)
+    setHomeView('setup')
+  }
+
+  function dispatchTutorialAwareAction(
+    action: GameAction,
+    actor: 'player' | 'bot',
+    options?: {
+      proxyNickname?: string
+      bypassUserInputLock?: boolean
+    },
+  ) {
+    if (!tutorialActive || tutorialCompleted) {
+      dispatchGameAction(action, options)
+      return
+    }
+
+    const currentTutorialStepIndex = tutorialStepIndexRef.current
+    const expectedStep = TUTORIAL_STEPS[currentTutorialStepIndex] ?? null
+    if (!expectedStep) {
+      return
+    }
+
+    if (expectedStep.actor !== actor || !matchesTutorialAction(expectedStep.action, action)) {
+      if (actor === 'player') {
+        setTutorialHintFeedback(
+          language === 'pt'
+            ? 'Ação bloqueada: siga o passo atual do tutorial.'
+            : 'Action blocked: follow the current tutorial step.',
+        )
+      }
+      return
+    }
+
+    dispatchGameAction(action, {
+      ...options,
+      bypassUserInputLock: options?.bypassUserInputLock ?? actor === 'bot',
+      onApplied: (applied) => {
+        if (!applied) {
+          if (actor === 'player') {
+            setTutorialHintFeedback(
+              language === 'pt'
+                ? 'Esse passo ainda não está válido neste estado. Siga a instrução exibida.'
+                : 'This step is not valid in the current state yet. Follow the shown instruction.',
+            )
+          }
+          return
+        }
+
+        setTutorialHintFeedback(null)
+        const next = currentTutorialStepIndex + 1
+        if (next >= TUTORIAL_STEPS.length) {
+          setTutorialCompleted(true)
+          return
+        }
+
+        tutorialStepIndexRef.current = next
+        setTutorialStepIndex((current) => (current === currentTutorialStepIndex ? next : current))
+      },
+    })
+  }
+
   const onPlayCard = (cardId: number) => {
-    dispatchGameAction({ type: 'play_card', cardId })
+    dispatchTutorialAwareAction({ type: 'play_card', cardId }, 'player')
   }
 
   const onDrawCard = () => {
-    dispatchGameAction({ type: 'draw_end_turn' })
+    dispatchTutorialAwareAction({ type: 'draw_end_turn' }, 'player')
   }
 
   const onRestart = () => {
+    if (tutorialActive) {
+      startGuidedTutorial()
+      return
+    }
+
     resetMatchUiState()
     setGame(
       createInitialGame({
@@ -2394,26 +3063,26 @@ function App() {
   const visibleActionLog =
     logFilter === 'all'
       ? actionTurnLog
-      : actionTurnLog.filter((entry) => entry.turn === turnCounterRef.current)
+      : actionTurnLog.filter((entry) => entry.turn === currentTurnNumber)
 
   const onResolvePending = () => {
-    dispatchGameAction({ type: 'pass_reaction' })
+    dispatchTutorialAwareAction({ type: 'pass_reaction' }, 'player')
   }
 
   const onCancelPending = () => {
-    dispatchGameAction({ type: 'cancel_reaction' })
+    dispatchTutorialAwareAction({ type: 'cancel_reaction' }, 'player')
   }
 
   const onDiscardForEvent = (cardId: number) => {
-    dispatchGameAction({ type: 'discard_pending_event', cardId })
+    dispatchTutorialAwareAction({ type: 'discard_pending_event', cardId }, 'player')
   }
 
   const onSelectActionTarget = (cardId: number) => {
-    dispatchGameAction({ type: 'select_action_target', cardId })
+    dispatchTutorialAwareAction({ type: 'select_action_target', cardId }, 'player')
   }
 
   const onSelectFutureTarget = (targetPlayerIndex: number) => {
-    dispatchGameAction({ type: 'select_future_target', targetPlayerIndex })
+    dispatchTutorialAwareAction({ type: 'select_future_target', targetPlayerIndex }, 'player')
   }
 
   const canControlPendingDiscard = !networkMatchActive || game.pendingDiscard?.playerIndex === localPlayerIndex
@@ -2471,6 +3140,12 @@ function App() {
   const latestDiscardCardId = game.discardPile.length > 0 ? game.discardPile[game.discardPile.length - 1] : null
   const discardCascadeCards = game.discardPile.slice(-5).reverse()
   const safeStatusText = redactDrawDetails(game.statusText)
+  const showTableActionHud =
+    tutorialActive ||
+    game.phase === 'REACTION_WINDOW' ||
+    game.phase === 'DISCARD_SELECTION' ||
+    game.phase === 'ACTION_SELECTION' ||
+    (showFutureReveal && Boolean(game.lastFutureReveal) && canViewFutureReveal)
 
   const displayedSelfHand: Array<{ cardId: number; groupKey: string }> = selfPlayer
     ? [...selfPlayer.hand]
@@ -2536,9 +3211,13 @@ function App() {
     return seat
   }
 
-  const getFanTransformStyle = (index: number, total: number): CSSProperties => {
+  const getFanTransformStyle = (index: number, total: number): AppCssVars => {
     if (total <= 1) {
-      return { ['--fan-transform' as any]: 'translateY(0px) rotate(0deg)', ['--fan-z' as any]: 2 }
+      return {
+        '--fan-drop': '0px',
+        '--fan-rotation': '0deg',
+        '--fan-z': 2,
+      }
     }
 
     const center = (total - 1) / 2
@@ -2546,8 +3225,9 @@ function App() {
     const rotation = Math.max(-18, Math.min(18, distanceFromCenter * 3.1))
     const drop = Math.min(20, Math.abs(distanceFromCenter) * 2.4)
     return {
-      ['--fan-transform' as any]: `translateY(${drop}px) rotate(${rotation}deg)`,
-      ['--fan-z' as any]: Math.round(100 - Math.abs(distanceFromCenter) * 5),
+      '--fan-drop': `${drop}px`,
+      '--fan-rotation': `${rotation}deg`,
+      '--fan-z': Math.round(100 - Math.abs(distanceFromCenter) * 5),
     }
   }
 
@@ -2577,10 +3257,7 @@ function App() {
         key={`seat-${player.id}`}
         className={`seat-node ${isActing ? 'active' : ''} ${isSeatTargetable ? 'targetable' : ''}`}
         data-seat-player={index}
-        style={{
-          ['--seat-left' as any]: `${seatPlacement.left}%`,
-          ['--seat-top' as any]: `${seatPlacement.top}%`,
-        }}
+        style={{ '--seat-left': `${seatPlacement.left}%`, '--seat-top': `${seatPlacement.top}%` } as AppCssVars}
         onClick={canClickSeatTarget ? () => onSelectFutureTarget(index) : undefined}
       >
         <div className="seat-chip">
@@ -2642,6 +3319,16 @@ function App() {
             <button type="button" onClick={requestSnapshot}>
               {language === 'pt' ? 'Ressincronizar Snapshot' : 'Resync Snapshot'}
             </button>
+          )}
+          {tutorialActive && (
+            <>
+              <button type="button" onClick={startGuidedTutorial}>
+                {language === 'pt' ? 'Reiniciar tutorial' : 'Restart tutorial'}
+              </button>
+              <button type="button" onClick={exitGuidedTutorialToHome}>
+                {language === 'pt' ? 'Sair do tutorial' : 'Exit tutorial'}
+              </button>
+            </>
           )}
           <button type="button" onClick={onRestart} disabled={networkMatchActive}>
             {language === 'pt' ? 'Nova Partida' : 'New Match'}
@@ -2786,7 +3473,7 @@ function App() {
                 <img
                   key={`discard-cascade-${cardId}-${index}`}
                   className="discard-cascade-card"
-                  style={{ ['--cascade-index' as any]: index } as CSSProperties}
+                  style={{ '--cascade-index': index } as AppCssVars}
                   src={getPreferredCardImageUrl(cardId)}
                   data-fallback-src={getCardPngUrl(cardId)}
                   alt={language === 'pt' ? `Carta descartada ${cardId}` : `Discarded card ${cardId}`}
@@ -2801,11 +3488,11 @@ function App() {
             <div
               className={`timeline-action-projectile ${timelineActionProjectile.direction} ${timelineActionProjectileActive ? 'active' : ''}`}
               style={{
-                ['--from-x' as any]: `${timelineActionProjectile.fromX}px`,
-                ['--from-y' as any]: `${timelineActionProjectile.fromY}px`,
-                ['--to-x' as any]: `${timelineActionProjectile.toX}px`,
-                ['--to-y' as any]: `${timelineActionProjectile.toY}px`,
-              }}
+                '--from-x': `${timelineActionProjectile.fromX}px`,
+                '--from-y': `${timelineActionProjectile.fromY}px`,
+                '--to-x': `${timelineActionProjectile.toX}px`,
+                '--to-y': `${timelineActionProjectile.toY}px`,
+              } as AppCssVars}
             >
               <img
                 src={getPreferredCardImageUrl(timelineActionProjectile.sourceCardId)}
@@ -2820,11 +3507,11 @@ function App() {
             <div
               className={`resource-flow-projectile ${resourceFlowProjectile.type} ${resourceFlowProjectile.cardId ? 'with-card' : 'generic'} ${resourceFlowProjectileActive ? 'active' : ''}`}
               style={{
-                ['--from-x' as any]: `${resourceFlowProjectile.fromX}px`,
-                ['--from-y' as any]: `${resourceFlowProjectile.fromY}px`,
-                ['--to-x' as any]: `${resourceFlowProjectile.toX}px`,
-                ['--to-y' as any]: `${resourceFlowProjectile.toY}px`,
-              }}
+                '--from-x': `${resourceFlowProjectile.fromX}px`,
+                '--from-y': `${resourceFlowProjectile.fromY}px`,
+                '--to-x': `${resourceFlowProjectile.toX}px`,
+                '--to-y': `${resourceFlowProjectile.toY}px`,
+              } as AppCssVars}
             >
               {resourceFlowProjectile.cardId ? (
                 <img
@@ -2933,13 +3620,26 @@ function App() {
             </div>
           )}
 
-          {(game.phase === 'REACTION_WINDOW' || game.phase === 'DISCARD_SELECTION' || game.phase === 'ACTION_SELECTION' || (showFutureReveal && game.lastFutureReveal && canViewFutureReveal)) && (
+          {showTableActionHud && (
             <div className="table-action-hud">
               <div className="table-phase-pill">
                 <span className={`ui-icon phase-${tablePrompt.iconKey}`} aria-hidden="true" />
                 {tablePrompt.title}
               </div>
               <div className="table-prompt-text" title={tablePrompt.hint}>{tablePrompt.hint}</div>
+              {tutorialActive && (
+                <div className={`table-tutorial-popup ${tutorialCompleted ? 'done' : ''}`}>
+                  <div className="table-tutorial-title">
+                    <span className="ui-icon chip-phase" aria-hidden="true" />
+                    <strong>
+                      {language === 'pt' ? 'Tutorial Guiado' : 'Guided Tutorial'}
+                      {!tutorialCompleted ? ` • ${tutorialStepIndex + 1}/${TUTORIAL_STEPS.length}` : ''}
+                    </strong>
+                  </div>
+                  {tutorialHint && <div className="table-tutorial-hint">{tutorialHint}</div>}
+                  {tutorialHintFeedback && <div className="table-tutorial-feedback">{tutorialHintFeedback}</div>}
+                </div>
+              )}
               {game.phase === 'REACTION_WINDOW' && reactionCardId !== null && (
                 <div key={reactionWindowVisualKey} className="reaction-card-ui">
                   <div className="reaction-card-top-row">
@@ -3074,7 +3774,7 @@ function App() {
                   )}
                   <div
                     className={`hand-grid hand-fan ${isFutureRevealWindowActive ? 'blocked' : ''}`}
-                    style={{ ['--hand-card-width' as any]: `${selfHandLayout.cardWidth}px` }}
+                    style={{ '--hand-card-width': `${selfHandLayout.cardWidth}px` } as AppCssVars}
                   >
                     {displayedSelfHand.map((entry, cardIndex) => {
                       const previousGroup = cardIndex > 0 ? displayedSelfHand[cardIndex - 1].groupKey : null
@@ -3123,8 +3823,8 @@ function App() {
                           }
                           style={{
                             ...getFanTransformStyle(cardIndex, displayedSelfHand.length),
-                            ['--fan-overlap' as any]: overlap,
-                          }}
+                            '--fan-overlap': overlap,
+                          } as AppCssVars}
                         />
                       )
                     })}

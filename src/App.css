@@ -76,6 +76,26 @@
   grid-template-columns: 1fr;
 }
 
+.rules-page-grid {
+  gap: 0.85rem;
+}
+
+.rules-copy {
+  margin: 0.2rem 0 0.45rem;
+  line-height: 1.5;
+}
+
+.rules-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.32rem;
+}
+
+.rules-list li {
+  line-height: 1.45;
+}
+
 .setup-card {
   background:
     linear-gradient(135deg, rgba(11, 19, 33, 0.86), rgba(10, 17, 30, 0.78)),
@@ -273,6 +293,38 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tutorial-banner {
+  margin-top: 0.48rem;
+  padding: 0.55rem 0.64rem;
+  border-radius: 12px;
+  border: 1px solid rgba(139, 198, 255, 0.38);
+  background: rgba(16, 25, 37, 0.72);
+}
+
+.tutorial-banner.done {
+  border-color: rgba(130, 235, 168, 0.45);
+  background: rgba(18, 38, 27, 0.7);
+}
+
+.tutorial-banner-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.84rem;
+}
+
+.tutorial-banner-hint {
+  margin-top: 0.2rem;
+  font-size: 0.82rem;
+}
+
+.tutorial-banner-feedback {
+  margin-top: 0.22rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #ffd7a8;
 }
 
 .hud-chip-row {
@@ -610,6 +662,39 @@
   margin-top: 0.2rem;
   opacity: 0.9;
   font-size: 0.77rem;
+}
+
+.table-tutorial-popup {
+  margin-top: 0.34rem;
+  border: 1px solid rgba(139, 198, 255, 0.42);
+  border-radius: 9px;
+  background: rgba(13, 23, 36, 0.78);
+  padding: 0.34rem 0.46rem;
+}
+
+.table-tutorial-popup.done {
+  border-color: rgba(130, 235, 166, 0.52);
+  background: rgba(17, 34, 24, 0.78);
+}
+
+.table-tutorial-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  font-size: 0.76rem;
+}
+
+.table-tutorial-hint {
+  margin-top: 0.18rem;
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+
+.table-tutorial-feedback {
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #ffd7a8;
 }
 
 .ui-icon.prompt-timer {
@@ -1319,7 +1404,7 @@
   left: 50%;
   transform: translateX(-50%);
   bottom: 0.34rem;
-  z-index: 4;
+  z-index: 6;
   border: 1px solid rgba(255, 255, 255, 0.22);
   background: rgba(0, 0, 0, 0.28) url('/ui-skins/timeline_strip_bg.webp') center / 100% 100% no-repeat;
   border-radius: 10px;
@@ -1734,6 +1819,7 @@
   padding: 1.55rem 0.2rem 0.68rem;
   min-height: 240px;
   overflow: hidden;
+  isolation: isolate;
 }
 
 .self-hand-row {
@@ -1747,7 +1833,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  top: 0;
+  top: 10px;
   bottom: 0;
   border-radius: 16px;
   background: url('/ui-skins/hand_dock_bg.webp') center / 100% 100% no-repeat;
@@ -1774,14 +1860,20 @@
 
 .hand-fan .card-image-button {
   flex: 0 0 auto;
+  position: relative;
   padding: 0.22rem;
   border-radius: 12px;
   margin-left: var(--fan-overlap, -28px);
   transform-origin: bottom center;
-  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+  transition:
+    transform 0.2s cubic-bezier(0.2, 0.72, 0.2, 1) 70ms,
+    box-shadow 0.16s ease,
+    border-color 0.16s ease;
   background: rgba(255, 255, 255, 0.02);
-  transform: var(--fan-transform, translateY(0px) rotate(0deg));
+  transform: translateY(var(--fan-drop, 0px)) rotate(var(--fan-rotation, 0deg));
   z-index: var(--fan-z, 1);
+  will-change: transform;
+  backface-visibility: hidden;
 }
 
 .hand-fan .card-image-button:first-child {
@@ -1792,6 +1884,10 @@
   width: var(--hand-card-width, 132px);
   max-width: var(--hand-card-width, 132px);
   border-radius: 10px;
+  display: block;
+  transform: translateZ(0.01px);
+  backface-visibility: hidden;
+  will-change: transform;
 }
 
 .hand-fan .newly-drawn-card {
@@ -1810,7 +1906,7 @@
     filter: brightness(1.08);
   }
   100% {
-    transform: var(--fan-transform, translateY(0px) rotate(0deg));
+    transform: translateY(var(--fan-drop, 0px)) rotate(var(--fan-rotation, 0deg));
     opacity: 1;
     filter: brightness(1);
   }
@@ -1818,9 +1914,16 @@
 
 .hand-fan .card-image-button:hover:not(:disabled),
 .hand-fan .card-image-button:focus-visible:not(:disabled) {
-  transform: translateY(-18px) scale(1.05) !important;
-  z-index: 9;
+  transform:
+    translateY(calc(var(--fan-drop, 0px) - 22px))
+    rotate(var(--fan-rotation, 0deg))
+    scale(1.055) !important;
+  z-index: 10;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+.hand-fan:has(.card-image-button:hover:not(:disabled)) .card-image-button:not(:hover):not(:focus-visible) {
+  pointer-events: none;
 }
 
 .targetable-card,
@@ -1874,7 +1977,10 @@
 
 .hand-fan .reaction-tnh-card:hover:not(:disabled),
 .hand-fan .reaction-tnh-card:focus-visible:not(:disabled) {
-  transform: translateY(-20px) scale(1.07) !important;
+  transform:
+    translateY(calc(var(--fan-drop, 0px) - 24px))
+    rotate(var(--fan-rotation, 0deg))
+    scale(1.075) !important;
   box-shadow: 0 0 0 2px rgba(255, 118, 118, 0.5), 0 0 24px rgba(255, 88, 88, 0.52);
 }
 
@@ -1890,7 +1996,10 @@
 
 .hand-fan .discardable-card:hover:not(:disabled),
 .hand-fan .discardable-card:focus-visible:not(:disabled) {
-  transform: translateY(-20px) scale(1.06) !important;
+  transform:
+    translateY(calc(var(--fan-drop, 0px) - 23px))
+    rotate(var(--fan-rotation, 0deg))
+    scale(1.065) !important;
   box-shadow: 0 0 0 2px rgba(255, 194, 123, 0.34), 0 12px 26px rgba(0, 0, 0, 0.34);
 }
 
