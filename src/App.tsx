@@ -896,6 +896,7 @@ function App() {
   const chatToastTimeoutRef = useRef<number | null>(null)
   const userActionLockRef = useRef<boolean>(false)
   const userActionLockTimeoutRef = useRef<number | null>(null)
+  const autoSelectedActionKeyRef = useRef<string | null>(null)
   const pendingLanIntentRef = useRef<
     | {
         type: 'host'
@@ -2450,6 +2451,187 @@ function App() {
     rules,
   ])
 
+  useEffect(() => {
+    if (
+      !game ||
+      tutorialActive ||
+      tutorialCompleted ||
+      isFutureRevealWindowActive ||
+      game.phase !== 'ACTION_SELECTION' ||
+      !game.pendingActionSelection
+    ) {
+      autoSelectedActionKeyRef.current = null
+      return
+    }
+
+    const canControlSelection = !networkMatchActive || game.pendingActionSelection.playerIndex === localPlayerIndex
+    if (!canControlSelection) {
+      autoSelectedActionKeyRef.current = null
+      return
+    }
+
+    const selectableTargets = getSelectableActionTargets(game)
+    if (selectableTargets.length !== 1) {
+      autoSelectedActionKeyRef.current = null
+      return
+    }
+
+    const target = selectableTargets[0]
+    const actionKey = `${game.pendingActionSelection.actionName}:${game.pendingActionSelection.step}:${game.pendingActionSelection.playerIndex}:${target}`
+    if (autoSelectedActionKeyRef.current === actionKey) {
+      return
+    }
+
+    autoSelectedActionKeyRef.current = actionKey
+    const isPlayerTargetSelection =
+      game.pendingActionSelection.actionName === 'future_peek' ||
+      (game.pendingActionSelection.actionName === 'paradox_swap' && game.pendingActionSelection.step === 'choose_target')
+
+    if (isPlayerTargetSelection) {
+      dispatchGameAction({ type: 'select_future_target', targetPlayerIndex: target })
+      return
+    }
+
+    dispatchGameAction({ type: 'select_action_target', cardId: target })
+  }, [
+    dispatchGameAction,
+    game,
+    isFutureRevealWindowActive,
+    localPlayerIndex,
+    networkMatchActive,
+    tutorialActive,
+    tutorialCompleted,
+  ])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat || event.altKey || event.ctrlKey || event.metaKey) {
+        return
+      }
+
+      if (event.key !== '1' && event.key !== '2' && event.key !== '3') {
+        return
+      }
+
+      const target = event.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+
+      const current = gameRef.current
+      if (!current || !rules || current.winner || isFutureRevealWindowActive || (tutorialActive && !tutorialCompleted)) {
+        return
+      }
+
+      const selfIndex = networkMatchActive && localPlayerIndex >= 0 ? localPlayerIndex : 0
+      if (selfIndex < 0 || selfIndex >= current.players.length) {
+        return
+      }
+
+      const selfPlayer = current.players[selfIndex]
+      const isSelfPlayWindowNow =
+        current.phase === 'PLAYER_CHOICE' &&
+        current.currentPlayerIndex === selfIndex &&
+        !selfPlayer.isBot &&
+        (!networkMatchActive || selfIndex === localPlayerIndex)
+
+      if (event.key === '1') {
+        if (isSelfPlayWindowNow) {
+          const firstPlayable = selfPlayer.hand.find((cardId) =>
+            canPlayCardFromHand(cardId, selfPlayer.hand, current, selfIndex),
+          )
+          if (firstPlayable !== undefined) {
+            event.preventDefault()
+            dispatchGameAction({ type: 'play_card', cardId: firstPlayable })
+            return
+          }
+        }
+
+        if (
+          current.phase === 'REACTION_WINDOW' &&
+          current.currentPlayerIndex === selfIndex &&
+          canCurrentReactorCancel(current)
+        ) {
+          event.preventDefault()
+          dispatchGameAction({ type: 'cancel_reaction' })
+          return
+        }
+
+        if (
+          current.phase === 'DISCARD_SELECTION' &&
+          current.pendingDiscard?.playerIndex === selfIndex &&
+          selfPlayer.hand.length > 0
+        ) {
+          event.preventDefault()
+          dispatchGameAction({ type: 'discard_pending_event', cardId: selfPlayer.hand[0] })
+          return
+        }
+
+        if (current.phase === 'ACTION_SELECTION' && current.pendingActionSelection) {
+          const canControlSelection = !networkMatchActive || current.pendingActionSelection.playerIndex === localPlayerIndex
+          if (!canControlSelection) {
+            return
+          }
+
+          const selectableTargets = getSelectableActionTargets(current)
+          if (selectableTargets.length === 0) {
+            return
+          }
+
+          const targetId = selectableTargets[0]
+          const isPlayerTargetSelection =
+            current.pendingActionSelection.actionName === 'future_peek' ||
+            (current.pendingActionSelection.actionName === 'paradox_swap' &&
+              current.pendingActionSelection.step === 'choose_target')
+
+          event.preventDefault()
+          if (isPlayerTargetSelection) {
+            dispatchGameAction({ type: 'select_future_target', targetPlayerIndex: targetId })
+          } else {
+            dispatchGameAction({ type: 'select_action_target', cardId: targetId })
+          }
+          return
+        }
+      }
+
+      if (event.key === '2') {
+        if (isSelfPlayWindowNow) {
+          event.preventDefault()
+          dispatchGameAction({ type: 'draw_end_turn' })
+          return
+        }
+
+        if (current.phase === 'REACTION_WINDOW' && (!networkMatchActive || isLocalHost)) {
+          event.preventDefault()
+          dispatchGameAction({ type: 'pass_reaction' }, { bypassUserInputLock: true })
+        }
+      }
+
+      if (event.key === '3' && current.phase === 'REACTION_WINDOW' && (!networkMatchActive || isLocalHost)) {
+        event.preventDefault()
+        dispatchGameAction({ type: 'pass_reaction' }, { bypassUserInputLock: true })
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [
+    dispatchGameAction,
+    isFutureRevealWindowActive,
+    isLocalHost,
+    localPlayerIndex,
+    networkMatchActive,
+    rules,
+    tutorialActive,
+    tutorialCompleted,
+  ])
+
   if (!rules) {
     return (
       <main className="app-shell app-home">
@@ -3147,6 +3329,126 @@ function App() {
     game.phase === 'ACTION_SELECTION' ||
     (showFutureReveal && Boolean(game.lastFutureReveal) && canViewFutureReveal)
 
+  const reactionQueue =
+    game.phase === 'REACTION_WINDOW' && game.pendingPlay
+      ? (() => {
+          const eligiblePlayerIndexes = game.players
+            .map((_, index) => index)
+            .filter((index) => {
+              if (index === game.pendingPlay?.playedBy) {
+                return false
+              }
+              if (game.pendingPlay?.effectOnly) {
+                return index === game.pendingPlay.reactor
+              }
+              return true
+            })
+
+          if (eligiblePlayerIndexes.length === 0) {
+            return [] as Array<{
+              playerIndex: number
+              playerName: string
+              isCurrent: boolean
+              alreadyCanceled: boolean
+            }>
+          }
+
+          const startIndex = Math.max(0, eligiblePlayerIndexes.indexOf(game.pendingPlay.nextResponder))
+          const orderedPlayerIndexes = [
+            ...eligiblePlayerIndexes.slice(startIndex),
+            ...eligiblePlayerIndexes.slice(0, startIndex),
+          ]
+
+          return orderedPlayerIndexes.map((playerIndex, orderIndex) => ({
+            playerIndex,
+            playerName: game.players[playerIndex]?.name ?? (language === 'pt' ? 'Jogador' : 'Player'),
+            isCurrent: orderIndex === 0,
+            alreadyCanceled: game.pendingPlay?.cancelers.includes(playerIndex) ?? false,
+          }))
+        })()
+      : []
+
+  const firstPlayableSelfCardId =
+    isSelfPlayWindow && selfPlayer
+      ? selfPlayer.hand.find((cardId) => canPlayCardFromHand(cardId, selfPlayer.hand, game, selfPlayerIndex)) ?? null
+      : null
+
+  const firstDiscardCardId = isSelfDiscardWindow && selfPlayer && selfPlayer.hand.length > 0 ? selfPlayer.hand[0] : null
+
+  const firstSelectableTarget = selectableActionCardIds[0] ?? null
+
+  const quickActions = (() => {
+    const actions: Array<{
+      key: '1' | '2' | '3'
+      label: string
+      action: GameAction
+    }> = []
+
+    if (isSelfPlayWindow) {
+      if (firstPlayableSelfCardId !== null) {
+        actions.push({
+          key: '1',
+          label: language === 'pt' ? 'Jogar 1ª carta válida' : 'Play first valid card',
+          action: { type: 'play_card', cardId: firstPlayableSelfCardId },
+        })
+      }
+
+      actions.push({
+        key: '2',
+        label: language === 'pt' ? 'Comprar' : 'Draw',
+        action: { type: 'draw_end_turn' },
+      })
+      return actions.slice(0, 3)
+    }
+
+    if (isReactionWindowActive) {
+      if (canLocalCancelReactionNow) {
+        actions.push({
+          key: '1',
+          label: language === 'pt' ? 'TNH (cancelar reação)' : 'TNH (cancel reaction)',
+          action: { type: 'cancel_reaction' },
+        })
+      }
+
+      if (isReactionTimerOwner) {
+        actions.push({
+          key: '2',
+          label: language === 'pt' ? 'Passar reação' : 'Pass reaction',
+          action: { type: 'pass_reaction' },
+        })
+      }
+      return actions.slice(0, 3)
+    }
+
+    if (isSelfDiscardWindow && firstDiscardCardId !== null) {
+      actions.push({
+        key: '1',
+        label: language === 'pt' ? 'Descartar 1ª carta' : 'Discard first card',
+        action: { type: 'discard_pending_event', cardId: firstDiscardCardId },
+      })
+      return actions
+    }
+
+    if ((isCardTargetSelection || isPlayerTargetSelection) && firstSelectableTarget !== null) {
+      actions.push({
+        key: '1',
+        label: isPlayerTargetSelection
+          ? language === 'pt'
+            ? 'Selecionar único jogador válido'
+            : 'Select only valid player'
+          : language === 'pt'
+            ? 'Selecionar único alvo válido'
+            : 'Select only valid target',
+        action: isPlayerTargetSelection
+          ? { type: 'select_future_target', targetPlayerIndex: firstSelectableTarget }
+          : { type: 'select_action_target', cardId: firstSelectableTarget },
+      })
+      return actions
+    }
+
+    return actions
+  })()
+
   const displayedSelfHand: Array<{ cardId: number; groupKey: string }> = selfPlayer
     ? [...selfPlayer.hand]
         .sort((left, right) => {
@@ -3627,6 +3929,28 @@ function App() {
                 {tablePrompt.title}
               </div>
               <div className="table-prompt-text" title={tablePrompt.hint}>{tablePrompt.hint}</div>
+              {quickActions.length > 0 && (
+                <div className="quick-actions-row">
+                  {quickActions.map((quickAction) => (
+                    <button
+                      key={`quick-action-${quickAction.key}-${quickAction.label}`}
+                      type="button"
+                      className="quick-action-button"
+                      onClick={() => {
+                        if (quickAction.action.type === 'pass_reaction') {
+                          dispatchGameAction(quickAction.action, { bypassUserInputLock: true })
+                          return
+                        }
+                        dispatchGameAction(quickAction.action)
+                      }}
+                      disabled={isFutureRevealWindowActive}
+                    >
+                      <span className="quick-action-key">{quickAction.key}</span>
+                      <span>{quickAction.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               {tutorialActive && (
                 <div className={`table-tutorial-popup ${tutorialCompleted ? 'done' : ''}`}>
                   <div className="table-tutorial-title">
@@ -3667,6 +3991,36 @@ function App() {
                     />
                     <span className="reaction-card-caption">{language === 'pt' ? 'Carta em reação' : 'Card in reaction'}</span>
                   </div>
+                  {reactionQueue.length > 0 && (
+                    <div className="reaction-queue" aria-label={language === 'pt' ? 'Fila de reação' : 'Reaction queue'}>
+                      {reactionQueue.map((queueItem) => {
+                        const queueStatus = queueItem.isCurrent
+                          ? language === 'pt'
+                            ? 'Respondendo'
+                            : 'Responding'
+                          : queueItem.alreadyCanceled
+                            ? language === 'pt'
+                              ? 'TNH usado'
+                              : 'TNH used'
+                            : language === 'pt'
+                              ? 'Na fila'
+                              : 'Queued'
+
+                        return (
+                          <div
+                            key={`reaction-queue-${queueItem.playerIndex}`}
+                            className={`reaction-queue-item ${queueItem.isCurrent ? 'current' : ''}`}
+                          >
+                            <span className="reaction-queue-name">{queueItem.playerName}</span>
+                            <span className="reaction-queue-status">{queueStatus}</span>
+                            {queueItem.isCurrent && reactionSecondsLeft !== null && (
+                              <span className="reaction-queue-timer">{reactionSecondsLeft}s</span>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
               {game.phase === 'REACTION_WINDOW' && isReactionTimerOwner && reactionSecondsLeft !== null && (
