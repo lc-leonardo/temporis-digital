@@ -628,7 +628,7 @@
   top: 0.6rem;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 7;
+  z-index: 10;
   border: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(6, 12, 22, 0.78) url('/ui-skins/action_hud_panel.webp') center / 100% 100% no-repeat;
   border-radius: 10px;
@@ -1325,6 +1325,7 @@
   top: var(--seat-top);
   width: 210px;
   transform: translate(-50%, -50%);
+  z-index: 3;
   transition: none;
 }
 
@@ -1463,7 +1464,7 @@
   border-radius: 0;
   padding: 0.35rem 0.5rem 0.55rem;
   background: transparent;
-  z-index: 5;
+  z-index: 6;
 }
 
 .self-name-tag {
@@ -1478,6 +1479,7 @@
   border-radius: 999px;
   padding: 0.2rem 0.55rem;
   font-size: 0.82rem;
+  z-index: 9;
 }
 
 .self-timeline-panel {
@@ -1485,7 +1487,7 @@
   left: 50%;
   transform: translateX(-50%);
   bottom: 0.34rem;
-  z-index: 6;
+  z-index: 4;
   border: 1px solid rgba(255, 255, 255, 0.22);
   background: rgba(0, 0, 0, 0.28) url('/ui-skins/timeline_strip_bg.webp') center / 100% 100% no-repeat;
   border-radius: 10px;
@@ -1905,21 +1907,8 @@
 
 .self-hand-row {
   position: relative;
-  z-index: 5;
+  z-index: 8;
   padding-left: 116px;
-}
-
-.self-hand-row::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 10px;
-  bottom: 0;
-  border-radius: 16px;
-  background: url('/ui-skins/hand_dock_bg.webp') center / 100% 100% no-repeat;
-  opacity: 0.34;
-  pointer-events: none;
 }
 
 .discard-inline-hint {
