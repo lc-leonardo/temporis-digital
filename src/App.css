@@ -571,6 +571,22 @@
   z-index: 12;
 }
 
+.mobile-screen-actions {
+  position: absolute;
+  top: 0.65rem;
+  left: 0.65rem;
+  right: auto;
+  z-index: 14;
+}
+
+.mobile-screen-button {
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 0.16rem 0.62rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
 .table-result-overlay {
   position: absolute;
   left: 50%;
@@ -1320,13 +1336,31 @@
 .seat-node {
   --seat-left: 50%;
   --seat-top: 18%;
+  --seat-scale: 1;
+  --seat-shift-y: 0px;
   position: absolute;
   left: var(--seat-left);
   top: var(--seat-top);
   width: 210px;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, calc(-50% + var(--seat-shift-y))) scale(var(--seat-scale));
   z-index: 3;
   transition: none;
+}
+
+.table-board.target-selection-mode .seat-node {
+  --seat-scale: 0.86;
+  --seat-shift-y: 10px;
+  opacity: 0.55;
+  filter: saturate(0.78);
+  z-index: 2;
+}
+
+.table-board.target-selection-mode .seat-node.target-candidate {
+  --seat-scale: 1.02;
+  --seat-shift-y: 0px;
+  opacity: 1;
+  filter: none;
+  z-index: 5;
 }
 
 .seat-node.targetable .seat-chip {
@@ -1499,6 +1533,17 @@
   bottom: 200px;
 }
 
+.self-area.timeline-priority .self-timeline-panel {
+  z-index: 11;
+  bottom: 232px;
+  box-shadow: 0 0 0 1px rgba(139, 198, 255, 0.44), 0 10px 26px rgba(0, 0, 0, 0.34);
+}
+
+.self-area.timeline-priority .self-hand-row {
+  opacity: 0.25;
+  pointer-events: none;
+}
+
 .self-area.active {
   box-shadow: none;
 }
@@ -1589,13 +1634,15 @@
 
 .player-action-cue {
   margin: 0.35rem 0 0.6rem;
-  border: 1px solid rgba(139, 198, 255, 0.6);
-  background: rgba(139, 198, 255, 0.16);
+  border: 1px solid rgba(139, 198, 255, 0.78);
+  background: rgba(6, 15, 28, 0.9);
   color: #e9f5ff;
   border-radius: 8px;
-  padding: 0.35rem 0.55rem;
+  padding: 0.38rem 0.58rem;
   font-size: 0.84rem;
   font-weight: 700;
+  line-height: 1.28;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
   animation: actionCueFlash 0.8s ease-out;
 }
 
@@ -1729,7 +1776,7 @@
   align-items: center;
   gap: 0.35rem;
   pointer-events: none;
-  animation: tableCardPreviewIn 0.95s ease-out;
+  animation: tableCardPreviewIn 1.4s ease-out;
 }
 
 .table-card-preview img {
@@ -1760,7 +1807,7 @@
 }
 
 .table-card-preview.tnh {
-  animation: tnhCinematicIn 1.35s ease-out;
+  animation: tnhCinematicIn 1.7s ease-out;
 }
 
 .table-card-preview.tnh img {
@@ -1913,10 +1960,15 @@
 
 .discard-inline-hint {
   margin-bottom: 0.32rem;
-  font-size: 0.86rem;
+  font-size: 0.82rem;
   font-weight: 800;
-  color: #ffd7a8;
+  color: #ffe5c4;
   text-align: center;
+  border: 1px solid rgba(255, 199, 138, 0.66);
+  background: rgba(46, 21, 8, 0.86);
+  border-radius: 8px;
+  padding: 0.22rem 0.42rem;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
 }
 
 .draw-button-dock {
@@ -2246,6 +2298,27 @@
   align-items: flex-start;
 }
 
+.app-shell.mobile-viewport.focus-mode .floating-overlay-stack {
+  left: auto;
+  right: 0.55rem;
+  bottom: 0.55rem;
+  align-items: flex-end;
+}
+
+.app-shell.mobile-fullscreen .floating-overlay-stack {
+  left: auto;
+  right: calc(env(safe-area-inset-right, 0px) + 0.5rem);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 0.6rem);
+  align-items: flex-end;
+  z-index: 120;
+}
+
+.app-shell.mobile-fullscreen .mobile-screen-actions {
+  left: auto;
+  right: calc(env(safe-area-inset-right, 0px) + 0.45rem);
+  top: calc(env(safe-area-inset-top, 0px) + 6.1rem);
+}
+
 .floating-bubble {
   display: inline-flex;
   align-items: center;
@@ -2320,6 +2393,19 @@
   bottom: 9.2rem;
 }
 
+.app-shell.mobile-viewport.focus-mode .floating-chat-toast {
+  left: auto;
+  right: 0.55rem;
+  bottom: 5.5rem;
+}
+
+.app-shell.mobile-fullscreen .floating-chat-toast {
+  left: auto;
+  right: calc(env(safe-area-inset-right, 0px) + 0.5rem);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 5.8rem);
+  z-index: 125;
+}
+
 @keyframes chatToastIn {
   from {
     transform: translateY(8px);
@@ -2388,11 +2474,76 @@
 }
 
 @media (max-width: 960px) {
+  .mobile-screen-actions {
+    top: calc(env(safe-area-inset-top, 0px) + 0.45rem);
+    left: calc(env(safe-area-inset-left, 0px) + 0.45rem);
+  }
+
+  .app-shell {
+    padding: 0.6rem;
+  }
+
+  .app-shell.focus-mode {
+    padding: 0.3rem;
+  }
+
   .home-grid,
   .setup-form-grid.two,
   .setup-stat-grid,
   .setup-stat-grid.compact {
     grid-template-columns: 1fr;
+  }
+
+  .top-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.62rem;
+    margin-bottom: 0.72rem;
+  }
+
+  .top-bar h1 {
+    font-size: clamp(1.2rem, 4vw, 1.5rem);
+  }
+
+  .top-bar p {
+    max-width: none;
+    font-size: 0.86rem;
+    margin-top: 0.18rem;
+  }
+
+  .actions {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .actions > * {
+    flex: 1 1 140px;
+  }
+
+  .status-panel {
+    padding: 0.62rem 0.7rem;
+    margin-bottom: 0.72rem;
+  }
+
+  .hud-primary-row,
+  .hud-chip-row {
+    gap: 0.34rem;
+  }
+
+  .hud-chip,
+  .hud-turn-pill {
+    font-size: 0.74rem;
+  }
+
+  .hud-status-line,
+  .hud-warning-line {
+    white-space: normal;
+    line-height: 1.25;
+  }
+
+  .table-mode {
+    margin-bottom: 0.72rem;
+    padding: 0.44rem;
   }
 
   .home-hero {
@@ -2405,7 +2556,8 @@
   }
 
   .table-board {
-    min-height: 620px;
+    min-height: clamp(620px, 80vh, 760px);
+    border-radius: 16px;
   }
 
   .table-board.count-1 .seat-node {
@@ -2413,19 +2565,78 @@
   }
 
   .seat-node {
-    width: 170px;
+    width: 162px;
+  }
+
+  .table-board.count-3 .seat-node {
+    width: 152px;
+  }
+
+  .table-board.count-4 .seat-node {
+    width: 136px;
+  }
+
+  .table-board.count-5 .seat-node {
+    width: 122px;
   }
 
   .self-timeline-panel {
-    width: min(74vw, 460px);
+    width: min(80vw, 420px);
+    padding: 0.2rem 0.26rem;
   }
 
   .self-area.with-hand .self-timeline-panel {
-    bottom: 196px;
+    bottom: 154px;
+  }
+
+  .self-timeline.compact {
+    min-height: 54px;
+  }
+
+  .self-timeline.compact img {
+    width: 30px;
   }
 
   .self-hand-row {
-    padding-left: 0;
+    padding-left: 96px;
+  }
+
+  .table-action-hud {
+    top: 0.38rem;
+    font-size: 0.7rem;
+    max-width: calc(100% - 0.75rem);
+    padding: 0.32rem 0.42rem;
+  }
+
+  .table-prompt-text {
+    white-space: normal;
+    line-height: 1.28;
+    max-height: none;
+    overflow: visible;
+    font-size: 0.72rem;
+    color: #eaf5ff;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  .quick-action-button {
+    min-height: 22px;
+    font-size: 0.64rem;
+  }
+
+  .reaction-queue {
+    width: min(94vw, 360px);
+  }
+
+  .self-area {
+    width: calc(100% - 0.45rem);
+    bottom: 0.2rem;
+    padding: 0.3rem 0.28rem 0.35rem;
+  }
+
+  .self-name-tag {
+    left: 0.2rem;
+    bottom: 0.2rem;
+    font-size: 0.74rem;
   }
 
   .table-card-preview-label {
@@ -2454,9 +2665,15 @@
   }
 
   .draw-button-dock {
-    position: static;
-    transform: none;
-    margin-bottom: 0.45rem;
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-42%);
+    width: 90px;
+    min-width: 90px;
+    min-height: 36px;
+    margin: 0;
+    font-size: 0.74rem;
   }
 
   .floating-overlay-stack {
@@ -2470,6 +2687,13 @@
     bottom: 3.6rem;
   }
 
+  .app-shell.mobile-viewport.focus-mode .floating-overlay-stack {
+    left: auto;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    align-items: flex-end;
+  }
+
   .floating-chat-toast {
     right: 0.5rem;
     bottom: 5.8rem;
@@ -2481,11 +2705,17 @@
     bottom: 8.6rem;
   }
 
+  .app-shell.mobile-viewport.focus-mode .floating-chat-toast {
+    left: auto;
+    right: 0.5rem;
+    bottom: 5.8rem;
+  }
+
   .hand-fan {
     justify-content: center;
-    min-height: 188px;
-    padding-top: 1.2rem;
-    padding-bottom: 0.1rem;
+    min-height: 120px;
+    padding: 0.72rem 0.1rem 0.12rem;
+    overflow: hidden;
   }
 
   .hand-fan .card-image-button {
@@ -2493,12 +2723,56 @@
   }
 
   .hand-fan .card-image-button img {
-    width: var(--hand-card-width, 112px);
-    max-width: var(--hand-card-width, 112px);
+    width: var(--hand-card-width, 66px);
+    max-width: var(--hand-card-width, 66px);
+  }
+
+  .table-card-preview {
+    top: 45%;
+    gap: 0.24rem;
+  }
+
+  .table-card-preview img {
+    width: 82px;
+  }
+
+  .table-card-preview.tnh img {
+    width: 98px;
+  }
+
+  .table-card-preview-label {
+    font-size: 0.68rem;
+    max-width: min(92vw, 520px);
+  }
+
+  .player-action-cue {
+    margin-top: 0.24rem;
+    margin-bottom: 0.34rem;
+    font-size: 0.72rem;
+    padding: 0.3rem 0.45rem;
+  }
+
+  .discard-inline-hint {
+    font-size: 0.74rem;
+  }
+
+  .self-area.timeline-priority .self-timeline-panel {
+    bottom: 188px;
   }
 
   .seat-timeline img {
     width: 40px;
+  }
+
+  .floating-panel {
+    width: min(92vw, 360px);
+    max-height: min(74vh, 520px);
+    overflow: hidden;
+  }
+
+  .chat-messages,
+  .action-log-list {
+    max-height: min(34vh, 240px);
   }
 
   .timeline-action-projectile img,
@@ -2520,6 +2794,125 @@
 }
 
 @media (max-width: 640px) {
+  .app-shell {
+    padding: 0.45rem;
+  }
+
+  .app-shell.focus-mode {
+    padding: 0.2rem;
+  }
+
+  .table-board {
+    border-radius: 12px;
+    min-height: clamp(560px, 76vh, 690px);
+  }
+
+  .seat-node {
+    width: 142px;
+  }
+
+  .table-board.count-4 .seat-node {
+    width: 120px;
+  }
+
+  .table-board.count-5 .seat-node {
+    width: 106px;
+  }
+
+  .seat-chip {
+    padding: 0.36rem 0.42rem;
+  }
+
+  .seat-meta {
+    font-size: 0.72rem;
+  }
+
+  .seat-timeline {
+    min-height: 50px;
+    gap: 0.2rem;
+  }
+
+  .self-area.with-hand .self-timeline-panel {
+    bottom: 142px;
+  }
+
+  .self-timeline.compact {
+    min-height: 50px;
+  }
+
+  .self-timeline.compact img {
+    width: 27px;
+  }
+
+  .self-name-tag {
+    max-width: calc(100% - 0.45rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .table-action-hud {
+    top: 0.3rem;
+    max-width: calc(100% - 0.55rem);
+    padding: 0.28rem 0.35rem;
+    font-size: 0.66rem;
+  }
+
+  .table-prompt-text {
+    font-size: 0.68rem;
+  }
+
+  .quick-actions-row {
+    gap: 0.22rem;
+  }
+
+  .quick-action-button {
+    min-height: 22px;
+    padding: 0.1rem 0.34rem;
+    font-size: 0.6rem;
+  }
+
+  .floating-overlay-stack {
+    right: 0.35rem;
+    bottom: 0.35rem;
+  }
+
+  .floating-chat-toast {
+    right: 0.35rem;
+    bottom: 5.3rem;
+  }
+
+  .self-area.timeline-priority .self-timeline-panel {
+    bottom: 168px;
+  }
+
+  .table-card-preview {
+    top: 43%;
+  }
+
+  .table-card-preview img {
+    width: 72px;
+  }
+
+  .table-card-preview.tnh img {
+    width: 84px;
+  }
+
+  .table-card-preview-label {
+    font-size: 0.62rem;
+    padding: 0.16rem 0.4rem;
+  }
+
+  .player-action-cue {
+    font-size: 0.66rem;
+    margin-bottom: 0.26rem;
+  }
+
+  .discard-inline-hint {
+    font-size: 0.68rem;
+    padding: 0.16rem 0.34rem;
+  }
+
   .timeline-action-projectile img,
   .resource-flow-projectile.with-card,
   .resource-flow-projectile.with-card img {
@@ -2531,5 +2924,105 @@
   .resource-flow-projectile::after {
     width: 12px;
     height: 12px;
+  }
+}
+
+@media (max-width: 1024px) and (orientation: landscape) {
+  .mobile-screen-actions {
+    top: calc(env(safe-area-inset-top, 0px) + 0.3rem);
+    left: calc(env(safe-area-inset-left, 0px) + 0.3rem);
+  }
+
+  .app-shell.mobile-viewport.focus-mode {
+    width: 100%;
+    max-width: none;
+    padding: 0.14rem;
+  }
+
+  .app-shell.mobile-fullscreen {
+    min-height: 100dvh;
+  }
+
+  .table-mode {
+    margin-bottom: 0.28rem;
+    padding: 0.24rem;
+  }
+
+  .table-board {
+    min-height: calc(100dvh - 0.4rem);
+    border-radius: 10px;
+  }
+
+  .table-action-hud {
+    top: 0.26rem;
+    max-width: calc(100% - 0.58rem);
+  }
+
+  .seat-node {
+    width: 138px;
+  }
+
+  .table-board.count-4 .seat-node {
+    width: 112px;
+  }
+
+  .table-board.count-5 .seat-node {
+    width: 98px;
+  }
+
+  .seat-meta {
+    font-size: 0.7rem;
+  }
+
+  .seat-timeline {
+    min-height: 42px;
+  }
+
+  .seat-timeline img {
+    width: 34px;
+    min-width: 34px;
+  }
+
+  .self-area.with-hand .self-timeline-panel {
+    bottom: 116px;
+  }
+
+  .self-timeline.compact {
+    min-height: 44px;
+  }
+
+  .self-timeline.compact img {
+    width: 23px;
+  }
+
+  .hand-fan {
+    min-height: 86px;
+    padding-top: 0.28rem;
+  }
+
+  .hand-fan .card-image-button img {
+    width: var(--hand-card-width, 46px);
+    max-width: var(--hand-card-width, 46px);
+  }
+
+  .draw-button-dock {
+    width: 78px;
+    min-width: 78px;
+    min-height: 28px;
+    font-size: 0.72rem;
+  }
+
+  .self-area.timeline-priority .self-timeline-panel {
+    bottom: 134px;
+  }
+
+  .floating-overlay-stack {
+    bottom: 0.26rem;
+    right: 0.26rem;
+    gap: 0.34rem;
+  }
+
+  .floating-panel {
+    max-height: 64vh;
   }
 }

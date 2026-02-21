@@ -20,10 +20,11 @@ import {
 const BOT_PROFILE = 'balanced'
 const BALANCED_DRAW_CHANCE = 0.25
 const BALANCED_CANCEL_CHANCE = 0.6
-const TABLE_PREVIEW_DURATION_MS = 1300
-const ACTION_TABLE_PREVIEW_DURATION_MS = 1800
-const PROJECTILE_CLEANUP_MS = 820
+const TABLE_PREVIEW_DURATION_MS = 1900
+const ACTION_TABLE_PREVIEW_DURATION_MS = 2600
+const PROJECTILE_CLEANUP_MS = 1100
 const USER_ACTION_LOCK_MS = 900
+const MOBILE_VIEWPORT_MAX_WIDTH = 960
 type Locale = 'en' | 'pt'
 
 type AppCssVars = CSSProperties & {
@@ -860,8 +861,10 @@ function App() {
     | null
   >(null)
   const [resourceFlowProjectileActive, setResourceFlowProjectileActive] = useState<boolean>(false)
+  const appShellRef = useRef<HTMLElement | null>(null)
   const tableBoardRef = useRef<HTMLDivElement | null>(null)
   const discardPileRef = useRef<HTMLDivElement | null>(null)
+  const [mobileFullscreenExitTop, setMobileFullscreenExitTop] = useState<number | null>(null)
   const [reactionSecondsLeft, setReactionSecondsLeft] = useState<number | null>(null)
   const [showFutureReveal, setShowFutureReveal] = useState<boolean>(false)
   const [futureRevealSecondsLeft, setFutureRevealSecondsLeft] = useState<number | null>(null)
@@ -873,6 +876,8 @@ function App() {
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false)
   const [isLogOpen, setIsLogOpen] = useState<boolean>(false)
   const [isFocusMode, setIsFocusMode] = useState<boolean>(false)
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(false)
+  const [isMobileFullscreen, setIsMobileFullscreen] = useState<boolean>(false)
   const [isDiscardCascadeOpen, setIsDiscardCascadeOpen] = useState<boolean>(false)
   const [drawnCardFlashId, setDrawnCardFlashId] = useState<number | null>(null)
   const [rematchSecondsLeft, setRematchSecondsLeft] = useState<number | null>(null)
@@ -923,6 +928,91 @@ function App() {
     rematchVotes: Array<{ playerIndex: number; nickname: string; accept: boolean | null }>
   } | null>(null)
   const roomInfoRef = useRef<typeof roomInfo>(null)
+  const mobileFullscreenAttemptedRef = useRef<boolean>(false)
+
+  const enterMobileFullscreen = useCallback(async () => {
+    if (!isMobileViewport || typeof document === 'undefined') {
+      return
+    }
+
+    const fullscreenTarget = (appShellRef.current ?? document.documentElement) as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void
+      msRequestFullscreen?: () => Promise<void> | void
+    }
+    const fullscreenDocument = document as Document & {
+      webkitFullscreenElement?: Element | null
+      msFullscreenElement?: Element | null
+    }
+
+    const fullscreenElement =
+      fullscreenDocument.fullscreenElement ??
+      fullscreenDocument.webkitFullscreenElement ??
+      fullscreenDocument.msFullscreenElement ??
+      null
+
+    if (!fullscreenElement) {
+      try {
+        if (typeof fullscreenTarget.requestFullscreen === 'function') {
+          await fullscreenTarget.requestFullscreen()
+        } else if (typeof fullscreenTarget.webkitRequestFullscreen === 'function') {
+          await fullscreenTarget.webkitRequestFullscreen()
+        } else if (typeof fullscreenTarget.msRequestFullscreen === 'function') {
+          await fullscreenTarget.msRequestFullscreen()
+        }
+      } catch {
+        // ignore browser rejection (requires direct user gesture in some contexts)
+      }
+    }
+
+    const orientationScreen = window.screen as Screen & {
+      orientation?: {
+        lock?: (orientation: string) => Promise<void>
+      }
+    }
+
+    try {
+      if (orientationScreen.orientation && typeof orientationScreen.orientation.lock === 'function') {
+        await orientationScreen.orientation.lock('landscape')
+      }
+    } catch {
+      // ignore unsupported orientation lock APIs
+    }
+  }, [isMobileViewport])
+
+  const exitMobileFullscreen = useCallback(async () => {
+    if (typeof document === 'undefined') {
+      return
+    }
+
+    const fullscreenDocument = document as Document & {
+      webkitFullscreenElement?: Element | null
+      msFullscreenElement?: Element | null
+      webkitExitFullscreen?: () => Promise<void> | void
+      msExitFullscreen?: () => Promise<void> | void
+    }
+
+    const fullscreenElement =
+      fullscreenDocument.fullscreenElement ??
+      fullscreenDocument.webkitFullscreenElement ??
+      fullscreenDocument.msFullscreenElement ??
+      null
+
+    if (!fullscreenElement) {
+      return
+    }
+
+    try {
+      if (typeof fullscreenDocument.exitFullscreen === 'function') {
+        await fullscreenDocument.exitFullscreen()
+      } else if (typeof fullscreenDocument.webkitExitFullscreen === 'function') {
+        await fullscreenDocument.webkitExitFullscreen()
+      } else if (typeof fullscreenDocument.msExitFullscreen === 'function') {
+        await fullscreenDocument.msExitFullscreen()
+      }
+    } catch {
+      // ignore browser rejection and keep gameplay running
+    }
+  }, [])
 
   useEffect(() => {
     window.localStorage.setItem('temporis_language', language)
@@ -986,6 +1076,103 @@ function App() {
   useEffect(() => {
     roomInfoRef.current = roomInfo
   }, [roomInfo])
+
+  useEffect(() => {
+    const updateMobileViewport = () => {
+      const isNarrow = window.innerWidth <= MOBILE_VIEWPORT_MAX_WIDTH
+      const coarsePointer = window.matchMedia('(pointer: coarse)').matches
+      const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0
+      setIsMobileViewport(isNarrow && (coarsePointer || hasTouch))
+    }
+
+    updateMobileViewport()
+    window.addEventListener('resize', updateMobileViewport)
+    window.addEventListener('orientationchange', updateMobileViewport)
+    return () => {
+      window.removeEventListener('resize', updateMobileViewport)
+      window.removeEventListener('orientationchange', updateMobileViewport)
+    }
+  }, [])
+
+  useEffect(() => {
+    const syncFullscreenState = () => {
+      const fullscreenDocument = document as Document & {
+        webkitFullscreenElement?: Element | null
+        msFullscreenElement?: Element | null
+      }
+      const fullscreenElement =
+        fullscreenDocument.fullscreenElement ??
+        fullscreenDocument.webkitFullscreenElement ??
+        fullscreenDocument.msFullscreenElement ??
+        null
+      const isFullscreen = Boolean(fullscreenElement)
+      setIsMobileFullscreen(isFullscreen)
+      if (isMobileViewport) {
+        setIsFocusMode(isFullscreen)
+      }
+    }
+
+    syncFullscreenState()
+    document.addEventListener('fullscreenchange', syncFullscreenState)
+    document.addEventListener('webkitfullscreenchange', syncFullscreenState)
+    document.addEventListener('MSFullscreenChange', syncFullscreenState)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenState)
+      document.removeEventListener('webkitfullscreenchange', syncFullscreenState)
+      document.removeEventListener('MSFullscreenChange', syncFullscreenState)
+    }
+  }, [isMobileViewport])
+
+  useEffect(() => {
+    if (!game || !isMobileViewport) {
+      mobileFullscreenAttemptedRef.current = false
+      return
+    }
+  }, [game, isMobileViewport])
+
+  useEffect(() => {
+    if (!game || !isMobileViewport || mobileFullscreenAttemptedRef.current) {
+      return
+    }
+
+    const onFirstInteraction = () => {
+      mobileFullscreenAttemptedRef.current = true
+      void enterMobileFullscreen()
+    }
+
+    window.addEventListener('pointerdown', onFirstInteraction, { once: true })
+    return () => window.removeEventListener('pointerdown', onFirstInteraction)
+  }, [enterMobileFullscreen, game, isMobileViewport])
+
+  useEffect(() => {
+    if (!isMobileViewport || !isMobileFullscreen || !tableBoardRef.current || !discardPileRef.current) {
+      setMobileFullscreenExitTop(null)
+      return
+    }
+
+    const updateAnchoredExitButton = () => {
+      const boardRect = tableBoardRef.current?.getBoundingClientRect()
+      const discardRect = discardPileRef.current?.getBoundingClientRect()
+      if (!boardRect || !discardRect) {
+        setMobileFullscreenExitTop(null)
+        return
+      }
+
+      const desiredTop = discardRect.bottom - boardRect.top + 10
+      const minTop = 8
+      const maxTop = Math.max(minTop, boardRect.height - 36)
+      setMobileFullscreenExitTop(Math.min(maxTop, Math.max(minTop, desiredTop)))
+    }
+
+    updateAnchoredExitButton()
+    window.addEventListener('resize', updateAnchoredExitButton)
+    window.addEventListener('orientationchange', updateAnchoredExitButton)
+    return () => {
+      window.removeEventListener('resize', updateAnchoredExitButton)
+      window.removeEventListener('orientationchange', updateAnchoredExitButton)
+    }
+  }, [game?.discardPile.length, isDiscardCascadeOpen, isMobileFullscreen, isMobileViewport])
 
   const connectLan = () => {
     if (networkSocket && networkSocket.readyState === WebSocket.OPEN) {
@@ -1640,9 +1827,9 @@ function App() {
     }
     const timeoutId = window.setTimeout(() => {
       setRecentPlayerAction(null)
-    }, 1700)
+    }, isMobileViewport ? 2600 : 1700)
     return () => window.clearTimeout(timeoutId)
-  }, [recentPlayerAction])
+  }, [isMobileViewport, recentPlayerAction])
 
   useEffect(() => {
     if (!tableCardPreview) {
@@ -1694,10 +1881,10 @@ function App() {
 
     const timeoutId = window.setTimeout(() => {
       setTimelineTargetCue(null)
-    }, 1200)
+    }, isMobileViewport ? 1850 : 1200)
 
     return () => window.clearTimeout(timeoutId)
-  }, [timelineTargetCue])
+  }, [isMobileViewport, timelineTargetCue])
 
   useEffect(() => {
     if (!resourceFlowCue || !tableBoardRef.current) {
@@ -2358,12 +2545,13 @@ function App() {
 
         return current
       })
-    }, 950)
+    }, isMobileViewport ? 1350 : 950)
 
     return () => window.clearTimeout(timeoutId)
   }, [
     activePlayer,
     game,
+    isMobileViewport,
     isFutureRevealWindowActive,
     markRecentAction,
     networkMatchActive,
@@ -3319,6 +3507,15 @@ function App() {
     selfPlayer.hand.some((cardId) => selectableActionCardIds.includes(cardId))
   const showSelfHandRow = selfPlayer !== null
   const isTimelineSelectionActive = isCardTargetSelection && isLocalController && !isFutureRevealWindowActive
+  const selfHasSelectableTimelineCard = Boolean(
+    isTimelineSelectionActive &&
+      selfPlayer !== null &&
+      selfPlayer.timeline.some((entry) => selectableActionCardIds.includes(entry.id)),
+  )
+  const isOpponentTimelineSelectionMode = Boolean(
+    isTimelineSelectionActive && !isSelfHandTargetSelection && !selfHasSelectableTimelineCard,
+  )
+  const isTableTargetSelectionMode = isPlayerTargetSelection || isOpponentTimelineSelectionMode
   const latestDiscardCardId = game.discardPile.length > 0 ? game.discardPile[game.discardPile.length - 1] : null
   const discardCascadeCards = game.discardPile.slice(-5).reverse()
   const safeStatusText = redactDrawDetails(game.statusText)
@@ -3463,7 +3660,26 @@ function App() {
         .map((cardId) => ({ cardId, groupKey: getCardGroupKey(cardId) }))
     : []
 
-  const getHandLayoutMetrics = (total: number): { cardWidth: number; overlapSame: string; overlapDiff: string } => {
+  const getHandLayoutMetrics = (
+    total: number,
+    compactLayout: boolean,
+  ): { cardWidth: number; overlapSame: string; overlapDiff: string } => {
+    if (compactLayout) {
+      if (total <= 6) {
+        return { cardWidth: 76, overlapSame: '-22px', overlapDiff: '-14px' }
+      }
+      if (total <= 9) {
+        return { cardWidth: 68, overlapSame: '-27px', overlapDiff: '-20px' }
+      }
+      if (total <= 12) {
+        return { cardWidth: 62, overlapSame: '-32px', overlapDiff: '-24px' }
+      }
+      if (total <= 16) {
+        return { cardWidth: 56, overlapSame: '-36px', overlapDiff: '-28px' }
+      }
+      return { cardWidth: 50, overlapSame: '-38px', overlapDiff: '-30px' }
+    }
+
     if (total <= 7) {
       return { cardWidth: 132, overlapSame: '-36px', overlapDiff: '-22px' }
     }
@@ -3479,7 +3695,7 @@ function App() {
     return { cardWidth: 88, overlapSame: '-80px', overlapDiff: '-72px' }
   }
 
-  const selfHandLayout = getHandLayoutMetrics(displayedSelfHand.length)
+  const selfHandLayout = getHandLayoutMetrics(displayedSelfHand.length, isMobileViewport)
 
   const getOpponentSeatPlacement = (seatOrder: number, total: number): { left: number; top: number } => {
     const layouts: Record<number, Array<{ left: number; top: number }>> = {
@@ -3553,11 +3769,15 @@ function App() {
     const canClickSeatTarget = isSeatTargetable && isLocalController && !isFutureRevealWindowActive
 
     const canSelectTimelineCardsFromSeat = isTimelineSelectionActive
+    const hasSelectableTimelineCard =
+      canSelectTimelineCardsFromSeat && player.timeline.some((entry) => selectableActionCardIds.includes(entry.id))
+    const isSeatSelectionCandidate = isSeatTargetable || hasSelectableTimelineCard
+    const shouldDimSeatForSelection = isTableTargetSelectionMode && !isSeatSelectionCandidate
 
     return (
       <div
         key={`seat-${player.id}`}
-        className={`seat-node ${isActing ? 'active' : ''} ${isSeatTargetable ? 'targetable' : ''}`}
+        className={`seat-node ${isActing ? 'active' : ''} ${isSeatTargetable ? 'targetable' : ''} ${isSeatSelectionCandidate ? 'target-candidate' : ''} ${shouldDimSeatForSelection ? 'selection-dim' : ''}`}
         data-seat-player={index}
         style={{ '--seat-left': `${seatPlacement.left}%`, '--seat-top': `${seatPlacement.top}%` } as AppCssVars}
         onClick={canClickSeatTarget ? () => onSelectFutureTarget(index) : undefined}
@@ -3608,7 +3828,10 @@ function App() {
   }
 
   return (
-    <main className={`app-shell ${isFocusMode ? 'focus-mode' : ''}`}>
+    <main
+      ref={appShellRef}
+      className={`app-shell ${isFocusMode ? 'focus-mode' : ''} ${isMobileViewport ? 'mobile-viewport' : ''} ${isMobileFullscreen ? 'mobile-fullscreen' : ''}`.trim()}
+    >
       {!isFocusMode && (
       <>
       <header className="top-bar">
@@ -3635,9 +3858,16 @@ function App() {
           <button type="button" onClick={onRestart} disabled={networkMatchActive}>
             {language === 'pt' ? 'Nova Partida' : 'New Match'}
           </button>
-          <button type="button" onClick={() => setIsFocusMode(true)}>
-            {language === 'pt' ? 'Foco na mesa' : 'Focus table'}
-          </button>
+          {isMobileViewport && (
+            <button type="button" onClick={() => void enterMobileFullscreen()}>
+              {language === 'pt' ? 'Tela cheia (mobile)' : 'Fullscreen (mobile)'}
+            </button>
+          )}
+          {!isMobileViewport && (
+            <button type="button" onClick={() => setIsFocusMode(true)}>
+              {language === 'pt' ? 'Foco na mesa' : 'Focus table'}
+            </button>
+          )}
         </div>
       </header>
 
@@ -3709,11 +3939,34 @@ function App() {
       )}
 
       <section className={`table-layout table-mode ${game.winner ? 'game-over-dim' : ''}`}>
-        <div ref={tableBoardRef} className={`table-board count-${opponentIndices.length}`}>
-          {isFocusMode && (
+        <div
+          ref={tableBoardRef}
+          className={`table-board count-${opponentIndices.length} ${isTableTargetSelectionMode ? 'target-selection-mode' : ''}`}
+        >
+          {isFocusMode && !isMobileViewport && (
             <button type="button" className="focus-toggle-floating" onClick={() => setIsFocusMode(false)}>
               {language === 'pt' ? 'Sair do foco' : 'Exit focus'}
             </button>
+          )}
+          {isMobileViewport && (
+            <div
+              className="mobile-screen-actions"
+              style={
+                isMobileFullscreen && mobileFullscreenExitTop !== null
+                  ? ({ top: `${mobileFullscreenExitTop}px` } as CSSProperties)
+                  : undefined
+              }
+            >
+              {!isMobileFullscreen ? (
+                <button type="button" className="mobile-screen-button" onClick={() => void enterMobileFullscreen()}>
+                  {language === 'pt' ? '📱 Tela cheia' : '📱 Fullscreen'}
+                </button>
+              ) : (
+                <button type="button" className="mobile-screen-button" onClick={() => void exitMobileFullscreen()}>
+                  {language === 'pt' ? '↘️ Sair da tela cheia' : '↘️ Exit fullscreen'}
+                </button>
+              )}
+            </div>
           )}
           <div
             className={`resource-pile deck ${game.deck.length > 2 ? 'stack-deep' : game.deck.length > 1 ? 'stack-mid' : ''}`}
@@ -4076,7 +4329,10 @@ function App() {
 
           {opponentIndices.map((index, seatOrder) => renderOpponentSeat(index, seatOrder))}
           {selfPlayer && (
-            <div data-seat-player={selfPlayerIndex} className={`self-area ${selfActivityLabel ? 'active' : ''} ${showSelfHandRow ? 'with-hand' : ''}`}>
+            <div
+              data-seat-player={selfPlayerIndex}
+              className={`self-area ${selfActivityLabel ? 'active' : ''} ${showSelfHandRow ? 'with-hand' : ''} ${selfHasSelectableTimelineCard ? 'timeline-priority' : ''}`}
+            >
               <div className="self-name-tag">
                 <strong>{selfPlayer.name}</strong>
                 {selfActivityLabel && <span className={`turn-badge ${selfActivityKind ? `activity-${selfActivityKind}` : ''}`}>{selfActivityLabel}</span>}
