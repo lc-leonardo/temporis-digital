@@ -1,5 +1,6 @@
 import { WebSocketServer } from 'ws'
 import { MongoClient } from 'mongodb'
+import { createServer } from 'http'
 
 const PORT = Number(process.env.LAN_PORT ?? 8787)
 const ROOM_SIZE_LIMIT = 6
@@ -8,6 +9,8 @@ const MONGO_DB_NAME = process.env.MONGO_DB_NAME ?? 'temporis'
 
 let mongoClient = null
 let chatMessagesCollection = null
+let matchLogsCollection = null
+let playerStatsCollection = null
 
 const rooms = new Map()
 const clients = new Map()
@@ -17,7 +20,13 @@ async function connectMongo() {
   await mongoClient.connect()
   const mongoDb = mongoClient.db(MONGO_DB_NAME)
   chatMessagesCollection = mongoDb.collection('chat_messages')
+  matchLogsCollection = mongoDb.collection('match_logs')
+  playerStatsCollection = mongoDb.collection('player_stats')
   await chatMessagesCollection.createIndex({ roomCode: 1, timestamp: -1 })
+  await matchLogsCollection.createIndex({ createdAt: -1 })
+  await matchLogsCollection.createIndex({ mode: 1, createdAt: -1 })
+  await playerStatsCollection.createIndex({ nicknameLower: 1 }, { unique: true })
+  await playerStatsCollection.createIndex({ wins: -1, losses: 1 })
   console.log(`MongoDB connected on ${MONGO_URI} (db: ${MONGO_DB_NAME})`)
 }
 
@@ -28,6 +37,211 @@ async function closeMongo() {
   await mongoClient.close()
   mongoClient = null
   chatMessagesCollection = null
+  matchLogsCollection = null
+  playerStatsCollection = null
+}
+
+function setCorsHeaders(response) {
+  response.setHeader('Access-Control-Allow-Origin', '*')
+  response.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+}
+
+function sendJson(response, statusCode, payload) {
+  setCorsHeaders(response)
+  response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' })
+  response.end(JSON.stringify(payload))
+}
+
+async function readJsonBody(request) {
+  const chunks = []
+  for await (const chunk of request) {
+    chunks.push(chunk)
+  }
+
+  if (chunks.length === 0) {
+    return null
+  }
+
+  const text = Buffer.concat(chunks).toString('utf8')
+  return JSON.parse(text)
+}
+
+function parseWinnerNames(winnerText) {
+  const winner = String(winnerText ?? '').trim()
+  if (!winner) {
+    return new Set()
+  }
+
+  if (winner.toLowerCase().startsWith('shared victory:')) {
+    const names = winner
+      .slice('shared victory:'.length)
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean)
+    return new Set(names)
+  }
+
+  return new Set([winner])
+}
+
+async function persistMatchResult(payload) {
+  if (!matchLogsCollection || !playerStatsCollection) {
+    throw new Error('Mongo collections are not initialized.')
+  }
+
+  const mode = String(payload?.mode ?? 'local')
+  const winner = String(payload?.winner ?? '').trim()
+  const players = Array.isArray(payload?.players)
+    ? payload.players
+        .map((entry) => ({
+          nickname: String(entry?.nickname ?? '').trim().slice(0, 20),
+          isBot: Boolean(entry?.isBot),
+          won: Boolean(entry?.won),
+          eraPoints: Number.isFinite(Number(entry?.eraPoints)) ? Number(entry.eraPoints) : 0,
+          handCount: Number.isFinite(Number(entry?.handCount)) ? Number(entry.handCount) : 0,
+          timelineCount: Number.isFinite(Number(entry?.timelineCount)) ? Number(entry.timelineCount) : 0,
+        }))
+        .filter((entry) => entry.nickname.length > 0)
+    : []
+
+  if (!winner || players.length < 2) {
+    throw new Error('Invalid match result payload.')
+  }
+
+  const timestamp = Number.isFinite(Number(payload?.timestamp)) ? Number(payload.timestamp) : Date.now()
+  const actionLog = Array.isArray(payload?.actionLog)
+    ? payload.actionLog
+        .map((line) => String(line).trim())
+        .filter(Boolean)
+        .slice(0, 300)
+    : []
+  const chatLog = Array.isArray(payload?.chatLog)
+    ? payload.chatLog
+        .map((line) => String(line).trim())
+        .filter(Boolean)
+        .slice(0, 200)
+    : []
+
+  const winnerNames = parseWinnerNames(winner)
+  const normalizedPlayers = players.map((player) => ({
+    ...player,
+    won: winnerNames.has(player.nickname),
+  }))
+
+  const document = {
+    mode,
+    winner,
+    players: normalizedPlayers,
+    actionLog,
+    chatLog,
+    roomCode: payload?.roomCode ? String(payload.roomCode).trim().toUpperCase().slice(0, 8) : null,
+    totalPlayers: normalizedPlayers.length,
+    createdAt: new Date(timestamp),
+    createdTimestamp: timestamp,
+  }
+
+  await matchLogsCollection.insertOne(document)
+
+  const now = new Date()
+  const updates = normalizedPlayers.map((player) => {
+    const nicknameLower = player.nickname.toLowerCase()
+    return {
+      updateOne: {
+        filter: { nicknameLower },
+        update: {
+          $setOnInsert: {
+            nicknameLower,
+            firstSeenAt: now,
+          },
+          $set: {
+            nickname: player.nickname,
+            lastSeenAt: now,
+            lastMode: mode,
+            isBot: player.isBot,
+          },
+          $inc: {
+            gamesPlayed: 1,
+            wins: player.won ? 1 : 0,
+            losses: player.won ? 0 : 1,
+            botGames: player.isBot ? 1 : 0,
+            humanGames: player.isBot ? 0 : 1,
+          },
+        },
+        upsert: true,
+      },
+    }
+  })
+
+  if (updates.length > 0) {
+    try {
+      await playerStatsCollection.bulkWrite(updates, { ordered: false })
+    } catch (error) {
+      console.error('Failed to update player stats after saving match log:', error)
+    }
+  }
+}
+
+async function handleApiRequest(request, response) {
+  if (!request.url) {
+    sendJson(response, 404, { ok: false, message: 'Not found.' })
+    return
+  }
+
+  if (request.method === 'OPTIONS') {
+    setCorsHeaders(response)
+    response.writeHead(204)
+    response.end()
+    return
+  }
+
+  const url = new URL(request.url, `http://127.0.0.1:${PORT}`)
+
+  if (request.method === 'POST' && url.pathname === '/api/match-results') {
+    try {
+      const payload = await readJsonBody(request)
+      await persistMatchResult(payload)
+      sendJson(response, 200, { ok: true })
+    } catch (error) {
+      console.error('Failed to persist match result:', error)
+      sendJson(response, 400, { ok: false, message: 'Invalid or incomplete match result payload.' })
+    }
+    return
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/player-stats') {
+    try {
+      const limitRaw = Number(url.searchParams.get('limit') ?? 40)
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(100, Math.floor(limitRaw))) : 40
+      const stats = playerStatsCollection
+        ? await playerStatsCollection
+            .find({})
+            .sort({ wins: -1, losses: 1, gamesPlayed: -1, nickname: 1 })
+            .limit(limit)
+            .toArray()
+        : []
+      sendJson(response, 200, {
+        ok: true,
+        stats: stats.map((entry) => ({
+          nickname: entry.nickname,
+          isBot: Boolean(entry.isBot),
+          wins: Number(entry.wins ?? 0),
+          losses: Number(entry.losses ?? 0),
+          gamesPlayed: Number(entry.gamesPlayed ?? 0),
+          botGames: Number(entry.botGames ?? 0),
+          humanGames: Number(entry.humanGames ?? 0),
+          lastMode: entry.lastMode ?? null,
+          lastSeenAt: entry.lastSeenAt ?? null,
+        })),
+      })
+    } catch (error) {
+      console.error('Failed to fetch player stats:', error)
+      sendJson(response, 500, { ok: false, message: 'Failed to fetch stats.' })
+    }
+    return
+  }
+
+  sendJson(response, 404, { ok: false, message: 'Not found.' })
 }
 
 function randomId(length = 6) {
@@ -408,7 +622,11 @@ function removeFromRoom(clientId, options = { preserveSeatOnDisconnect: false })
   broadcastRoom(roomCode)
 }
 
-const wss = new WebSocketServer({ port: PORT })
+const httpServer = createServer((request, response) => {
+  void handleApiRequest(request, response)
+})
+
+const wss = new WebSocketServer({ server: httpServer })
 
 wss.on('connection', (socket) => {
   const clientId = randomId(10)
@@ -895,6 +1113,9 @@ async function shutdown(signal) {
   await new Promise((resolve) => {
     wss.close(() => resolve())
   })
+  await new Promise((resolve) => {
+    httpServer.close(() => resolve())
+  })
   await closeMongo()
   process.exit(0)
 }
@@ -907,4 +1128,7 @@ process.on('SIGTERM', () => {
   void shutdown('SIGTERM')
 })
 
-console.log(`LAN lobby server running on ws://0.0.0.0:${PORT}`)
+httpServer.listen(PORT, () => {
+  console.log(`LAN lobby server running on ws://0.0.0.0:${PORT}`)
+  console.log(`HTTP API available on http://0.0.0.0:${PORT}/api/match-results`)
+})

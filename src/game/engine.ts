@@ -93,11 +93,24 @@ function hasAnyEligibleReactionCanceler(game: GameState): boolean {
   )
 }
 
-function pickDeterministicHandIndex(hand: number[], actorIndex: number, targetIndex: number, sourceCardId: number): number {
+function pickDeterministicHandIndex(
+  hand: number[],
+  actorIndex: number,
+  targetIndex: number,
+  sourceCardId: number,
+  entropySeed: number,
+): number {
   if (hand.length <= 1) {
     return 0
   }
-  const seed = sourceCardId * 31 + actorIndex * 17 + targetIndex * 13 + hand.length * 7
+  const weightedHandHash = hand.reduce((accumulator, cardId, index) => accumulator + cardId * (index + 3), 0)
+  const seed =
+    sourceCardId * 31 +
+    actorIndex * 17 +
+    targetIndex * 13 +
+    hand.length * 7 +
+    weightedHandHash * 5 +
+    entropySeed * 11
   return Math.abs(seed) % hand.length
 }
 
@@ -280,12 +293,62 @@ function applyEventOnPlay(
 }
 
 function findTimelineOwnerAndIndex(players: PlayerState[], cardId: number): { playerIndex: number; index: number } | null {
+  let match: { playerIndex: number; index: number } | null = null
+
   for (let playerIndex = 0; playerIndex < players.length; playerIndex += 1) {
     const index = players[playerIndex].timeline.findIndex((entry) => entry.id === cardId)
     if (index >= 0) {
-      return { playerIndex, index }
+      if (match) {
+        return null
+      }
+      match = { playerIndex, index }
     }
   }
+
+  return match
+}
+
+function validateUniquePhysicalCards(game: GameState): string | null {
+  const seen = new Map<number, string>()
+
+  const registerCard = (cardId: number, location: string): string | null => {
+    if (!Number.isInteger(cardId) || cardId < 1 || cardId > TOTAL_CARDS) {
+      return `Invalid card id ${cardId} at ${location}.`
+    }
+
+    const previousLocation = seen.get(cardId)
+    if (previousLocation) {
+      return `Card #${cardId} is duplicated (${previousLocation} and ${location}).`
+    }
+
+    seen.set(cardId, location)
+    return null
+  }
+
+  for (let index = 0; index < game.deck.length; index += 1) {
+    const error = registerCard(game.deck[index], `deck[${index}]`)
+    if (error) return error
+  }
+
+  for (let index = 0; index < game.discardPile.length; index += 1) {
+    const error = registerCard(game.discardPile[index], `discard[${index}]`)
+    if (error) return error
+  }
+
+  for (let playerIndex = 0; playerIndex < game.players.length; playerIndex += 1) {
+    const player = game.players[playerIndex]
+
+    for (let handIndex = 0; handIndex < player.hand.length; handIndex += 1) {
+      const error = registerCard(player.hand[handIndex], `players[${playerIndex}].hand[${handIndex}]`)
+      if (error) return error
+    }
+
+    for (let timelineIndex = 0; timelineIndex < player.timeline.length; timelineIndex += 1) {
+      const error = registerCard(player.timeline[timelineIndex].id, `players[${playerIndex}].timeline[${timelineIndex}]`)
+      if (error) return error
+    }
+  }
+
   return null
 }
 
@@ -513,12 +576,41 @@ export function queueCardPlay(game: GameState, cardId: number): GameState {
     }
   }
 
+  if (card.kind === 'action' && card.actionName === 'back_in_time') {
+    const hasAnyTimelineCard = game.players.some((player) => player.timeline.length > 0)
+    if (!hasAnyTimelineCard) {
+      return {
+        ...game,
+        statusText: 'Back in Time requires at least one card in timeline.',
+      }
+    }
+  }
+
+  if (card.kind === 'action' && card.actionName === 'local_reset') {
+    const hasAnyTimelineCard = game.players.some((player) => player.timeline.length > 0)
+    if (!hasAnyTimelineCard) {
+      return {
+        ...game,
+        statusText: 'Local Reset requires at least one card in timeline.',
+      }
+    }
+  }
+
   if (card.kind === 'event' && card.era === 'paradox') {
     const hasReplaceableTimelineCard = activePlayer.timeline.length > 0
+    const hasOpponentWithHand = game.players.some(
+      (player, index) => index !== game.currentPlayerIndex && player.hand.length > 0,
+    )
     if (!hasReplaceableTimelineCard) {
       return {
         ...game,
         statusText: 'Paradox requires another card in your timeline to swap. Play a different card first.',
+      }
+    }
+    if (!hasOpponentWithHand) {
+      return {
+        ...game,
+        statusText: 'Paradox requires an opponent with at least one card in hand.',
       }
     }
   }
@@ -1183,8 +1275,8 @@ export function selectActionTarget(game: GameState, cardId: number): GameState {
       if (pending.sourceCardId !== undefined && cardId === pending.sourceCardId) {
         return game
       }
-      const sourceOwner = findTimelineOwnerAndIndex(players, cardId)
-      if (!sourceOwner || sourceOwner.playerIndex !== pending.playerIndex) {
+      const sourceTimelineIndex = acting.timeline.findIndex((entry) => entry.id === cardId)
+      if (sourceTimelineIndex < 0) {
         return game
       }
 
@@ -1200,6 +1292,7 @@ export function selectActionTarget(game: GameState, cardId: number): GameState {
           ...pending,
           step: 'choose_target',
           selectedSourceCardId: cardId,
+          selectedSourceTimelineIndex: sourceTimelineIndex,
         },
         pendingFuturePeek: null,
         reactionHistory: game.reactionHistory,
@@ -1210,8 +1303,10 @@ export function selectActionTarget(game: GameState, cardId: number): GameState {
 
     const targetPlayerIndex = cardId
     const selectedSourceCardId = pending.selectedSourceCardId
+    const selectedSourceTimelineIndex = pending.selectedSourceTimelineIndex
     if (
       selectedSourceCardId === undefined ||
+      selectedSourceTimelineIndex === undefined ||
       targetPlayerIndex < 0 ||
       targetPlayerIndex >= players.length ||
       targetPlayerIndex === pending.playerIndex
@@ -1219,8 +1314,12 @@ export function selectActionTarget(game: GameState, cardId: number): GameState {
       return game
     }
 
-    const sourceOwner = findTimelineOwnerAndIndex(players, selectedSourceCardId)
-    if (!sourceOwner || sourceOwner.playerIndex !== pending.playerIndex) {
+    if (selectedSourceTimelineIndex < 0 || selectedSourceTimelineIndex >= acting.timeline.length) {
+      return game
+    }
+
+    const selectedTimelineCard = acting.timeline[selectedSourceTimelineIndex]
+    if (!selectedTimelineCard || selectedTimelineCard.id !== selectedSourceCardId) {
       return game
     }
 
@@ -1229,16 +1328,24 @@ export function selectActionTarget(game: GameState, cardId: number): GameState {
       return game
     }
 
-    const sourceTimelineCard = players[pending.playerIndex].timeline.splice(sourceOwner.index, 1)[0]
+    const sourceTimelineCard = players[pending.playerIndex].timeline.splice(selectedSourceTimelineIndex, 1)[0]
     if (!sourceTimelineCard) {
       return game
     }
+
+    const paradoxEntropySeed =
+      game.deck.length * 37 +
+      game.discardPile.length * 23 +
+      game.currentPlayerIndex * 19 +
+      players[targetPlayerIndex].timeline.length * 29 +
+      players[pending.playerIndex].timeline.length * 31
 
     const randomHandIndex = pickDeterministicHandIndex(
       target.hand,
       pending.playerIndex,
       targetPlayerIndex,
       selectedSourceCardId,
+      paradoxEntropySeed,
     )
     const stolenCardId = target.hand.splice(randomHandIndex, 1)[0]
     target.hand.push(sourceTimelineCard.id)
@@ -1385,8 +1492,8 @@ export function selectActionTarget(game: GameState, cardId: number): GameState {
 
   if (pending.actionName === 'rewrite_event') {
     if (pending.step === 'choose_target') {
-      const owner = findTimelineOwnerAndIndex(players, cardId)
-      if (!owner || owner.playerIndex !== pending.playerIndex) {
+      const sourceTimelineIndex = acting.timeline.findIndex((entry) => entry.id === cardId)
+      if (sourceTimelineIndex < 0) {
         return game
       }
 
@@ -1402,6 +1509,7 @@ export function selectActionTarget(game: GameState, cardId: number): GameState {
           ...pending,
           step: 'choose_rewrite_replacement',
           selectedSourceCardId: cardId,
+          selectedSourceTimelineIndex: sourceTimelineIndex,
         },
         pendingFuturePeek: null,
         reactionHistory: game.reactionHistory,
@@ -1411,7 +1519,8 @@ export function selectActionTarget(game: GameState, cardId: number): GameState {
     }
 
     const targetId = pending.selectedSourceCardId
-    if (!targetId) {
+    const targetTimelineIndex = pending.selectedSourceTimelineIndex
+    if (!targetId || targetTimelineIndex === undefined) {
       return game
     }
 
@@ -1426,12 +1535,44 @@ export function selectActionTarget(game: GameState, cardId: number): GameState {
       return game
     }
 
-    const targetOwner = findTimelineOwnerAndIndex(players, targetId)
-    if (!targetOwner || targetOwner.playerIndex !== pending.playerIndex) {
-      return game
+    let resolvedTargetTimelineIndex = targetTimelineIndex
+    if (resolvedTargetTimelineIndex < 0 || resolvedTargetTimelineIndex >= acting.timeline.length) {
+      resolvedTargetTimelineIndex = -1
     }
 
-    const removed = acting.timeline.splice(targetOwner.index, 1)[0]
+    const selectedTimelineCard =
+      resolvedTargetTimelineIndex >= 0 ? acting.timeline[resolvedTargetTimelineIndex] : undefined
+    if (!selectedTimelineCard || selectedTimelineCard.id !== targetId) {
+      const fallbackMatches = acting.timeline
+        .map((entry, index) => (entry.id === targetId ? index : -1))
+        .filter((index) => index >= 0)
+
+      if (fallbackMatches.length === 1) {
+        resolvedTargetTimelineIndex = fallbackMatches[0]
+      } else {
+        return {
+          ...game,
+          players,
+          discardPile,
+          deck,
+          phase: 'ACTION_SELECTION',
+          pendingPlay: null,
+          pendingDiscard: null,
+          pendingActionSelection: {
+            ...pending,
+            step: 'choose_target',
+            selectedSourceCardId: undefined,
+            selectedSourceTimelineIndex: undefined,
+          },
+          pendingFuturePeek: null,
+          reactionHistory: game.reactionHistory,
+          currentPlayerIndex: pending.playerIndex,
+          statusText: `${acting.name} rewrite target became invalid. Select a timeline card again.`,
+        }
+      }
+    }
+
+    const removed = acting.timeline.splice(resolvedTargetTimelineIndex, 1)[0]
     if (!removed) {
       return game
     }
@@ -1477,6 +1618,7 @@ export function selectActionTarget(game: GameState, cardId: number): GameState {
           ...pending,
           step: 'choose_swap_target',
           selectedSourceCardId: cardId,
+          selectedSourceTimelineIndex: sourceIndex,
         },
         pendingFuturePeek: null,
         reactionHistory: game.reactionHistory,
@@ -1486,30 +1628,36 @@ export function selectActionTarget(game: GameState, cardId: number): GameState {
     }
 
     const sourceId = pending.selectedSourceCardId
-    if (!sourceId) {
+    const sourceTimelineIndex = pending.selectedSourceTimelineIndex
+    if (!sourceId || sourceTimelineIndex === undefined) {
       return game
     }
 
-    const sourceIndex = acting.timeline.findIndex((entry) => entry.id === sourceId)
-    if (sourceIndex < 0) {
+    if (sourceTimelineIndex < 0 || sourceTimelineIndex >= acting.timeline.length) {
       return game
     }
 
-    const targetOwnerIndex = players.findIndex(
-      (player, index) => index !== pending.playerIndex && player.timeline.some((entry) => entry.id === cardId),
-    )
-    if (targetOwnerIndex < 0) {
+    const sourceTimelineCard = acting.timeline[sourceTimelineIndex]
+    if (!sourceTimelineCard || sourceTimelineCard.id !== sourceId) {
       return game
     }
-    const targetOwner = players[targetOwnerIndex]
+
+    const targetOwners = players
+      .map((player, index) => ({ player, index }))
+      .filter(({ index }) => index !== pending.playerIndex)
+      .filter(({ player }) => player.timeline.some((entry) => entry.id === cardId))
+    if (targetOwners.length !== 1) {
+      return game
+    }
+    const targetOwner = targetOwners[0].player
     const targetIndex = targetOwner.timeline.findIndex((entry) => entry.id === cardId)
     if (targetIndex < 0) {
       return game
     }
 
-    const sourceCard = acting.timeline[sourceIndex]
+    const sourceCard = acting.timeline[sourceTimelineIndex]
     const targetCard = targetOwner.timeline[targetIndex]
-    acting.timeline[sourceIndex] = targetCard
+    acting.timeline[sourceTimelineIndex] = targetCard
     targetOwner.timeline[targetIndex] = sourceCard
 
     return checkEndGame({
@@ -1605,29 +1753,44 @@ export function drawAndEndTurn(game: GameState): GameState {
 }
 
 export function applyGameAction(game: GameState, rules: TemporisRules, action: GameAction): GameState {
+  const integrityErrorBefore = validateUniquePhysicalCards(game)
+  if (integrityErrorBefore) {
+    return {
+      ...game,
+      statusText: `Integrity error: ${integrityErrorBefore}`,
+    }
+  }
+
+  let nextState: GameState
+
   if (action.type === 'play_card') {
     const queued = queueCardPlay(game, action.cardId)
-    return autoResolveReactionWhenNoCancelers(queued, rules)
-  }
-  if (action.type === 'draw_end_turn') {
-    return drawAndEndTurn(game)
-  }
-  if (action.type === 'pass_reaction') {
+    nextState = autoResolveReactionWhenNoCancelers(queued, rules)
+  } else if (action.type === 'draw_end_turn') {
+    nextState = drawAndEndTurn(game)
+  } else if (action.type === 'pass_reaction') {
     const resolved = resolvePendingPlay(game, rules)
-    return autoResolveReactionWhenNoCancelers(resolved, rules)
-  }
-  if (action.type === 'cancel_reaction') {
+    nextState = autoResolveReactionWhenNoCancelers(resolved, rules)
+  } else if (action.type === 'cancel_reaction') {
     const canceled = cancelPendingPlay(game, action.playerIndex)
-    return autoResolveReactionWhenNoCancelers(canceled, rules)
+    nextState = autoResolveReactionWhenNoCancelers(canceled, rules)
+  } else if (action.type === 'discard_pending_event') {
+    nextState = discardForPendingEvent(game, action.cardId)
+  } else if (action.type === 'select_future_target') {
+    nextState = selectActionTarget(game, action.targetPlayerIndex)
+  } else if (action.type === 'select_action_target') {
+    nextState = selectActionTarget(game, action.cardId)
+  } else {
+    nextState = game
   }
-  if (action.type === 'discard_pending_event') {
-    return discardForPendingEvent(game, action.cardId)
+
+  const integrityErrorAfter = validateUniquePhysicalCards(nextState)
+  if (integrityErrorAfter) {
+    return {
+      ...nextState,
+      statusText: `Integrity error: ${integrityErrorAfter}`,
+    }
   }
-  if (action.type === 'select_future_target') {
-    return selectActionTarget(game, action.targetPlayerIndex)
-  }
-  if (action.type === 'select_action_target') {
-    return selectActionTarget(game, action.cardId)
-  }
-  return game
+
+  return nextState
 }

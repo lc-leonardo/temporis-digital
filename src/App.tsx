@@ -17,12 +17,10 @@ import {
   preloadCardImages,
 } from './utils/cardAssets'
 
-const BOT_PROFILE = 'balanced'
-const BALANCED_DRAW_CHANCE = 0.25
-const BALANCED_CANCEL_CHANCE = 0.6
-const TABLE_PREVIEW_DURATION_MS = 1900
+type BotProfile = 'random' | 'balanced' | 'aggressive'
+const TABLE_PREVIEW_DURATION_MS = 2100
 const ACTION_TABLE_PREVIEW_DURATION_MS = 2600
-const PROJECTILE_CLEANUP_MS = 1100
+const PROJECTILE_CLEANUP_MS = 1450
 const USER_ACTION_LOCK_MS = 900
 const MOBILE_VIEWPORT_MAX_WIDTH = 960
 type Locale = 'en' | 'pt'
@@ -40,6 +38,119 @@ type AppCssVars = CSSProperties & {
   '--to-y'?: string
   '--hand-card-width'?: string
   '--fan-overlap'?: string
+}
+
+type TurnLogEntry = { id: string; turn: number; text: string; timestamp: number }
+type ChatLogEntry = { id: string; sender: string; text: string; timestamp: number }
+type PlayerStatsEntry = {
+  nickname: string
+  gamesPlayed: number
+  wins: number
+  losses: number
+  botWins: number
+  botLosses: number
+  humanWins: number
+  humanLosses: number
+  updatedAt?: string
+}
+
+function normalizeNickname(rawNickname: string): string {
+  return rawNickname.trim().slice(0, 20)
+}
+
+function isNicknameValid(rawNickname: string): boolean {
+  return normalizeNickname(rawNickname).length >= 2
+}
+
+function parseWinnerNames(winnerText: string): Set<string> {
+  const winner = String(winnerText ?? '').trim()
+  if (!winner) {
+    return new Set()
+  }
+
+  if (winner.toLowerCase().startsWith('shared victory:')) {
+    const names = winner
+      .slice('shared victory:'.length)
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean)
+    return new Set(names)
+  }
+
+  return new Set([winner])
+}
+
+function getNetworkStatusKind(status: string): 'online' | 'progress' | 'error' | 'offline' {
+  const normalized = status.toLowerCase()
+  if (normalized.includes('error')) {
+    return 'error'
+  }
+  if (normalized.includes('connect') && normalized.includes('...')) {
+    return 'progress'
+  }
+  if (normalized.includes('connected')) {
+    return 'online'
+  }
+  return 'offline'
+}
+
+function getTutorialHighlightZone(action: GameAction | null): 'hand' | 'timeline' | 'seats' | 'reaction' | null {
+  if (!action) {
+    return null
+  }
+  if (action.type === 'cancel_reaction' || action.type === 'pass_reaction') {
+    return 'reaction'
+  }
+  if (action.type === 'select_future_target') {
+    return 'seats'
+  }
+  if (action.type === 'select_action_target') {
+    return 'timeline'
+  }
+  return 'hand'
+}
+
+function buildMatchResultPayload(
+  game: GameState,
+  options: {
+    mode: 'local' | 'network' | 'tutorial'
+    roomCode: string | null
+    actionTurnLog: TurnLogEntry[]
+    chatMessages: ChatLogEntry[]
+  },
+): {
+  mode: 'local' | 'network' | 'tutorial'
+  roomCode: string | null
+  winner: string
+  players: Array<{
+    nickname: string
+    isBot: boolean
+    won: boolean
+    eraPoints: number
+    handCount: number
+    timelineCount: number
+  }>
+  actionLog: string[]
+  chatLog: string[]
+  timestamp: number
+} {
+  const winnerNames = parseWinnerNames(game.winner ?? '')
+  return {
+    mode: options.mode,
+    roomCode: options.roomCode,
+    winner: game.winner ?? '',
+    players: game.players.map((player) => ({
+      nickname: player.name,
+      isBot: player.isBot,
+      won: winnerNames.has(player.name),
+      eraPoints: player.timeline.filter((entry) => entry.era !== 'paradox').length,
+      handCount: player.hand.length,
+      timelineCount: player.timeline.length,
+    })),
+    actionLog: options.actionTurnLog.map((entry) => entry.text),
+    chatLog: options.chatMessages.map((entry) => `${entry.sender}: ${entry.text}`),
+    timestamp: Date.now(),
+  }
 }
 
 function getCardDisplayName(cardId: number, locale: Locale = 'en'): string {
@@ -392,7 +503,7 @@ function matchesTutorialAction(expected: GameAction, actual: GameAction): boolea
   return true
 }
 
-function buildTutorialGameState(): GameState {
+function buildTutorialGameState(playerNickname: string, botNickname: string = 'Chrono Bot'): GameState {
   const playerHand = [1, 21, 22, 41, 42, 61, 75, 85, 93, 99, 107, 113]
   const botHand = [2, 23, 24, 43, 86]
 
@@ -406,14 +517,14 @@ function buildTutorialGameState(): GameState {
     players: [
       {
         id: 1,
-        name: 'You',
+        name: playerNickname,
         isBot: false,
         hand: [...playerHand],
         timeline: [],
       },
       {
         id: 2,
-        name: 'Chrono Bot',
+        name: botNickname,
         isBot: true,
         hand: [...botHand],
         timeline: [{ id: 24, era: getCardDefinition(24).era ?? 'present' }],
@@ -619,16 +730,6 @@ function formatTime(timestamp: number): string {
   })
 }
 
-function getActionLogTag(text: string): 'PLAY' | 'DRAW' | 'REACT' | 'SELECT' | 'DISCARD' | 'INFO' {
-  const lower = text.toLowerCase()
-  if (lower.includes('played')) return 'PLAY'
-  if (lower.includes('drew')) return 'DRAW'
-  if (lower.includes('passed reaction') || lower.includes('that never happened')) return 'REACT'
-  if (lower.includes('selected')) return 'SELECT'
-  if (lower.includes('discarded')) return 'DISCARD'
-  return 'INFO'
-}
-
 function detectDrawnCardId(
   gameBefore: GameState | null | undefined,
   gameAfter: GameState | null | undefined,
@@ -673,6 +774,14 @@ function isTimeSwap(cardId: number): boolean {
   return cardId >= 113 && cardId <= 120
 }
 
+function isBackInTime(cardId: number): boolean {
+  return cardId >= 75 && cardId <= 84
+}
+
+function isLocalReset(cardId: number): boolean {
+  return cardId >= 99 && cardId <= 106
+}
+
 function isRewriteEvent(cardId: number): boolean {
   return cardId >= 93 && cardId <= 98
 }
@@ -696,7 +805,24 @@ function canPlayCardFromHand(cardId: number, hand: number[], game?: GameState, p
     isParadoxEvent(cardId) &&
     game &&
     playerIndex !== undefined &&
-    (playerIndex < 0 || playerIndex >= game.players.length || game.players[playerIndex].timeline.length === 0)
+    (playerIndex < 0 ||
+      playerIndex >= game.players.length ||
+      game.players[playerIndex].timeline.length === 0 ||
+      !game.players.some((player, index) => index !== playerIndex && player.hand.length > 0))
+  ) {
+    return false
+  }
+  if (
+    isBackInTime(cardId) &&
+    game &&
+    !game.players.some((player) => player.timeline.length > 0)
+  ) {
+    return false
+  }
+  if (
+    isLocalReset(cardId) &&
+    game &&
+    !game.players.some((player) => player.timeline.length > 0)
   ) {
     return false
   }
@@ -732,6 +858,139 @@ function fallbackActionCardId(actionName: string): number | null {
   if (actionName === 'time_swap') return 113
   if (actionName === 'future_peek') return 41
   return null
+}
+
+function chooseRandomTarget(targets: number[]): number {
+  return targets[Math.floor(Math.random() * targets.length)]
+}
+
+function chooseScoredTarget(
+  candidates: Array<{ target: number; score: number }>,
+  fallbackTargets: number[],
+): number {
+  if (candidates.length === 0) {
+    return chooseRandomTarget(fallbackTargets)
+  }
+
+  const bestScore = Math.max(...candidates.map((entry) => entry.score))
+  const bestTargets = candidates.filter((entry) => entry.score === bestScore).map((entry) => entry.target)
+  return chooseRandomTarget(bestTargets)
+}
+
+function getBotDrawChance(profile: BotProfile): number {
+  if (profile === 'aggressive') {
+    return 0.12
+  }
+  if (profile === 'random') {
+    return 0.38
+  }
+  return 0.25
+}
+
+function getBotCancelChance(profile: BotProfile): number {
+  if (profile === 'aggressive') {
+    return 0.78
+  }
+  if (profile === 'random') {
+    return 0.5
+  }
+  return 0.6
+}
+
+function formatBotProfile(profile: BotProfile, locale: Locale): string {
+  if (profile === 'aggressive') {
+    return locale === 'pt' ? 'agressivo' : 'aggressive'
+  }
+  if (profile === 'random') {
+    return locale === 'pt' ? 'aleatório' : 'random'
+  }
+  return locale === 'pt' ? 'balanceado' : 'balanced'
+}
+
+function chooseBotActionSelectionTarget(game: GameState, targets: number[], profile: BotProfile): number {
+  if (targets.length <= 1) {
+    return targets[0]
+  }
+
+  if (profile === 'random') {
+    return chooseRandomTarget(targets)
+  }
+
+  const pending = game.pendingActionSelection
+  if (!pending) {
+    return chooseRandomTarget(targets)
+  }
+
+  const actorIndex = pending.playerIndex
+
+  if (pending.actionName === 'future_peek' || (pending.actionName === 'paradox_swap' && pending.step === 'choose_target')) {
+    const playerCandidates = targets.map((playerIndex) => {
+      const targetPlayer = game.players[playerIndex]
+      const handSize = targetPlayer?.hand.length ?? 0
+      const timelineSize = targetPlayer?.timeline.length ?? 0
+      return {
+        target: playerIndex,
+        score: handSize * (profile === 'aggressive' ? 4 : 3) + timelineSize,
+      }
+    })
+    return chooseScoredTarget(playerCandidates, targets)
+  }
+
+  if (pending.actionName === 'rewrite_event' && pending.step === 'choose_rewrite_replacement') {
+    const replacementCandidates = targets.map((cardId) => {
+      const definition = getCardDefinition(cardId)
+      const eraScore =
+        definition.kind === 'event'
+          ? definition.era === 'future'
+            ? 3
+            : definition.era === 'present'
+              ? 2
+              : definition.era === 'past'
+                ? 1
+                : 0
+          : 0
+      return { target: cardId, score: eraScore }
+    })
+    return chooseScoredTarget(replacementCandidates, targets)
+  }
+
+  const timelineCardCandidates = targets.map((cardId) => {
+    let ownerIndex = -1
+    let eraScore = 0
+
+    for (let playerIndex = 0; playerIndex < game.players.length; playerIndex += 1) {
+      const timelineEntry = game.players[playerIndex].timeline.find((entry) => entry.id === cardId)
+      if (timelineEntry) {
+        ownerIndex = playerIndex
+        eraScore = timelineEntry.era === 'future' ? 3 : timelineEntry.era === 'present' ? 2 : timelineEntry.era === 'past' ? 1 : 0
+        break
+      }
+    }
+
+    let score = eraScore
+    if (pending.actionName === 'local_reset') {
+      score += ownerIndex !== actorIndex ? (profile === 'aggressive' ? 11 : 8) : 0
+    }
+    if (pending.actionName === 'back_in_time') {
+      score += ownerIndex !== actorIndex ? (profile === 'aggressive' ? 8 : 6) : -1
+    }
+    if (pending.actionName === 'time_swap' && pending.step === 'choose_swap_target') {
+      score += ownerIndex !== actorIndex ? (profile === 'aggressive' ? 10 : 7) : -2
+    }
+    if (pending.actionName === 'rewrite_event' && pending.step === 'choose_target') {
+      score += ownerIndex === actorIndex ? 5 : -10
+    }
+    if (pending.actionName === 'time_swap' && pending.step === 'choose_swap_source') {
+      score += ownerIndex === actorIndex ? 5 : -10
+    }
+    if (pending.actionName === 'paradox_swap' && pending.step === 'choose_swap_source') {
+      score += ownerIndex === actorIndex ? 5 : -10
+    }
+
+    return { target: cardId, score }
+  })
+
+  return chooseScoredTarget(timelineCardCandidates, targets)
 }
 
 function describeAction(action: GameAction): string {
@@ -783,11 +1042,23 @@ function App() {
     const saved = window.localStorage.getItem('temporis_language')
     return saved === 'pt' ? 'pt' : 'en'
   })
+  const [botProfile, setBotProfile] = useState<BotProfile>(() => {
+    if (typeof window === 'undefined') {
+      return 'balanced'
+    }
+    const saved = window.localStorage.getItem('temporis_bot_profile')
+    return saved === 'random' || saved === 'aggressive' || saved === 'balanced' ? saved : 'balanced'
+  })
   const [rules, setRules] = useState<TemporisRules | null>(null)
   const [game, setGame] = useState<GameState | null>(null)
   const [totalPlayers, setTotalPlayers] = useState<number>(2)
   const [serverUrl, setServerUrl] = useState<string>('ws://localhost:8787')
-  const [nickname, setNickname] = useState<string>('You')
+  const [nickname, setNickname] = useState<string>(() => {
+    if (typeof window === 'undefined') {
+      return ''
+    }
+    return normalizeNickname(window.localStorage.getItem('temporis_nickname') ?? '')
+  })
   const [roomCodeInput, setRoomCodeInput] = useState<string>('')
   const [networkClientId, setNetworkClientId] = useState<string | null>(null)
   const [networkStatus, setNetworkStatus] = useState<string>('Disconnected')
@@ -863,6 +1134,7 @@ function App() {
   const [resourceFlowProjectileActive, setResourceFlowProjectileActive] = useState<boolean>(false)
   const appShellRef = useRef<HTMLElement | null>(null)
   const tableBoardRef = useRef<HTMLDivElement | null>(null)
+  const deckPileRef = useRef<HTMLDivElement | null>(null)
   const discardPileRef = useRef<HTMLDivElement | null>(null)
   const [mobileFullscreenExitTop, setMobileFullscreenExitTop] = useState<number | null>(null)
   const [reactionSecondsLeft, setReactionSecondsLeft] = useState<number | null>(null)
@@ -870,11 +1142,10 @@ function App() {
   const [futureRevealSecondsLeft, setFutureRevealSecondsLeft] = useState<number | null>(null)
   const [futureRevealCycle, setFutureRevealCycle] = useState<number>(0)
   const [showGameOverCelebration, setShowGameOverCelebration] = useState<boolean>(false)
-  const [actionTurnLog, setActionTurnLog] = useState<Array<{ id: string; turn: number; text: string; timestamp: number }>>([])
-  const [chatMessages, setChatMessages] = useState<Array<{ id: string; sender: string; text: string; timestamp: number }>>([])
+  const [actionTurnLog, setActionTurnLog] = useState<TurnLogEntry[]>([])
+  const [chatMessages, setChatMessages] = useState<ChatLogEntry[]>([])
   const [chatInput, setChatInput] = useState<string>('')
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false)
-  const [isLogOpen, setIsLogOpen] = useState<boolean>(false)
   const [isFocusMode, setIsFocusMode] = useState<boolean>(false)
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(false)
   const [isMobileFullscreen, setIsMobileFullscreen] = useState<boolean>(false)
@@ -882,14 +1153,39 @@ function App() {
   const [drawnCardFlashId, setDrawnCardFlashId] = useState<number | null>(null)
   const [rematchSecondsLeft, setRematchSecondsLeft] = useState<number | null>(null)
   const [localRematchDecision, setLocalRematchDecision] = useState<'accept' | 'decline' | null>(null)
-  const [logFilter, setLogFilter] = useState<'current' | 'all'>('current')
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
   const [chatNotification, setChatNotification] = useState<string | null>(null)
   const [currentTurnNumber, setCurrentTurnNumber] = useState<number>(1)
+  const [selectedHandTargetPlayerIndex, setSelectedHandTargetPlayerIndex] = useState<number | null>(null)
   const [tutorialActive, setTutorialActive] = useState<boolean>(false)
   const [tutorialCompleted, setTutorialCompleted] = useState<boolean>(false)
   const [tutorialStepIndex, setTutorialStepIndex] = useState<number>(0)
   const [tutorialHintFeedback, setTutorialHintFeedback] = useState<string | null>(null)
+  const [leaderboard, setLeaderboard] = useState<PlayerStatsEntry[]>([])
+  const [isLeaderboardLoading, setIsLeaderboardLoading] = useState<boolean>(false)
+  const [leaderboardError, setLeaderboardError] = useState<string>('')
+  const [isNicknameModalOpen, setIsNicknameModalOpen] = useState<boolean>(false)
+  const [nicknameDraft, setNicknameDraft] = useState<string>('')
+  const [uiContrastMode, setUiContrastMode] = useState<'default' | 'high'>(() => {
+    if (typeof window === 'undefined') {
+      return 'default'
+    }
+    return window.localStorage.getItem('temporis_ui_contrast') === 'high' ? 'high' : 'default'
+  })
+  const [uiFontScale, setUiFontScale] = useState<number>(() => {
+    if (typeof window === 'undefined') {
+      return 1
+    }
+    const parsed = Number(window.localStorage.getItem('temporis_ui_font_scale') ?? '1')
+    return Number.isFinite(parsed) ? Math.max(0.9, Math.min(1.2, parsed)) : 1
+  })
+  const [uiCardScale, setUiCardScale] = useState<number>(() => {
+    if (typeof window === 'undefined') {
+      return 1
+    }
+    const parsed = Number(window.localStorage.getItem('temporis_ui_card_scale') ?? '1')
+    return Number.isFinite(parsed) ? Math.max(0.9, Math.min(1.2, parsed)) : 1
+  })
   const tutorialStepIndexRef = useRef<number>(0)
   const previousTimelineTailByPlayer = useRef<Record<number, string>>({})
   const gameRef = useRef<GameState | null>(null)
@@ -899,6 +1195,7 @@ function App() {
   const previousTurnPlayerRef = useRef<number | null>(null)
   const previousChatCountRef = useRef<number>(0)
   const chatToastTimeoutRef = useRef<number | null>(null)
+  const lastPersistedMatchSignatureRef = useRef<string | null>(null)
   const userActionLockRef = useRef<boolean>(false)
   const userActionLockTimeoutRef = useRef<number | null>(null)
   const autoSelectedActionKeyRef = useRef<string | null>(null)
@@ -1018,6 +1315,26 @@ function App() {
     window.localStorage.setItem('temporis_language', language)
     document.documentElement.lang = language
   }, [language])
+
+  useEffect(() => {
+    window.localStorage.setItem('temporis_nickname', normalizeNickname(nickname))
+  }, [nickname])
+
+  useEffect(() => {
+    window.localStorage.setItem('temporis_bot_profile', botProfile)
+  }, [botProfile])
+
+  useEffect(() => {
+    window.localStorage.setItem('temporis_ui_contrast', uiContrastMode)
+  }, [uiContrastMode])
+
+  useEffect(() => {
+    window.localStorage.setItem('temporis_ui_font_scale', String(uiFontScale))
+  }, [uiFontScale])
+
+  useEffect(() => {
+    window.localStorage.setItem('temporis_ui_card_scale', String(uiCardScale))
+  }, [uiCardScale])
 
   useEffect(() => {
     const loadRules = async () => {
@@ -1508,11 +1825,10 @@ function App() {
   }
 
   const hostLanRoom = () => {
-    const trimmedNickname = nickname.trim()
-    if (!trimmedNickname) {
-      setNetworkError('Nickname is required.')
+    if (!ensureNicknameReady()) {
       return
     }
+    const trimmedNickname = normalizeNickname(nickname)
 
     if (networkSocket && networkSocket.readyState === WebSocket.OPEN) {
       sendLanMessage({ type: 'host_room', nickname: trimmedNickname })
@@ -1527,11 +1843,10 @@ function App() {
   }
 
   const joinLanRoom = () => {
-    const trimmedNickname = nickname.trim()
-    if (!trimmedNickname) {
-      setNetworkError('Nickname is required.')
+    if (!ensureNicknameReady()) {
       return
     }
+    const trimmedNickname = normalizeNickname(nickname)
 
     const roomCode = roomCodeInput.trim().toUpperCase()
     if (!roomCode) {
@@ -1631,7 +1946,6 @@ function App() {
     setChatMessages([])
     setChatInput('')
     setIsChatOpen(false)
-    setIsLogOpen(false)
     setUnreadChatCount(0)
     setChatNotification(null)
     if (chatToastTimeoutRef.current !== null) {
@@ -1659,7 +1973,131 @@ function App() {
       window.clearTimeout(userActionLockTimeoutRef.current)
       userActionLockTimeoutRef.current = null
     }
+    lastPersistedMatchSignatureRef.current = null
   }
+
+  const getApiBaseUrl = useCallback((): string => {
+    const wsUrl = serverUrl.trim() || 'ws://localhost:8787'
+    if (wsUrl.startsWith('wss://')) {
+      return wsUrl.replace('wss://', 'https://')
+    }
+    if (wsUrl.startsWith('ws://')) {
+      return wsUrl.replace('ws://', 'http://')
+    }
+    return wsUrl
+  }, [serverUrl])
+
+  const loadLeaderboard = useCallback(async () => {
+    setIsLeaderboardLoading(true)
+    setLeaderboardError('')
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/player-stats?limit=8`)
+      if (!response.ok) {
+        throw new Error('failed')
+      }
+      const payload = (await response.json()) as { items?: PlayerStatsEntry[] }
+      setLeaderboard(Array.isArray(payload.items) ? payload.items : [])
+    } catch {
+      setLeaderboardError(
+        language === 'pt'
+          ? 'Não foi possível carregar o ranking agora.'
+          : 'Could not load leaderboard right now.',
+      )
+      setLeaderboard([])
+    } finally {
+      setIsLeaderboardLoading(false)
+    }
+  }, [getApiBaseUrl, language])
+
+  useEffect(() => {
+    if (!rules) {
+      return
+    }
+    loadLeaderboard().catch(() => {
+      // handled in callback
+    })
+  }, [loadLeaderboard, rules])
+
+  const buildLocalRoster = useCallback(
+    (playersCount: number) => {
+      const total = Math.max(2, Math.min(6, playersCount))
+      const playerName = normalizeNickname(nickname)
+      const roster = [
+        {
+          name: playerName,
+          isBot: false,
+        },
+      ]
+
+      for (let index = 1; index < total; index += 1) {
+        roster.push({
+          name: `Bot ${index}`,
+          isBot: true,
+        })
+      }
+
+      return roster
+    },
+    [nickname],
+  )
+
+  const ensureNicknameReady = useCallback((reason?: string): boolean => {
+    let normalized = normalizeNickname(nickname)
+    if (isNicknameValid(normalized)) {
+      if (normalized !== nickname) {
+        setNickname(normalized)
+      }
+      return true
+    }
+
+    setNicknameDraft(normalized.length > 0 ? normalized : 'Player')
+    setIsNicknameModalOpen(true)
+    setNetworkError(
+      reason ??
+        (language === 'pt'
+          ? 'Nickname obrigatório. Defina seu nome para continuar.'
+          : 'Nickname required. Set your name to continue.'),
+    )
+    return false
+  }, [language, nickname])
+
+  const saveNicknameDraft = useCallback(() => {
+    const normalized = normalizeNickname(nicknameDraft)
+    if (!isNicknameValid(normalized)) {
+      setNetworkError(
+        language === 'pt'
+          ? 'Nickname inválido. Use pelo menos 2 caracteres.'
+          : 'Invalid nickname. Use at least 2 characters.',
+      )
+      return
+    }
+
+    setNickname(normalized)
+    setNetworkError('')
+    setIsNicknameModalOpen(false)
+  }, [language, nicknameDraft])
+
+  const persistCompletedMatch = useCallback(
+    async (completedGame: GameState, mode: 'local' | 'network' | 'tutorial', roomCode: string | null) => {
+      const payload = buildMatchResultPayload(completedGame, {
+        mode,
+        roomCode,
+        actionTurnLog,
+        chatMessages,
+      })
+
+      try {
+        await fetch(`${getApiBaseUrl()}/api/match-results`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+      } catch (error) {
+        console.warn('Failed to persist match result to Mongo API:', error)
+      }
+    },
+    [actionTurnLog, chatMessages, getApiBaseUrl],
+  )
 
   const pushTurnLog = useCallback((
     gameBefore: GameState | null,
@@ -1720,7 +2158,7 @@ function App() {
         cardId: null,
       })
       const expectedSelfIndex = networkMatchActive && localPlayerIndex >= 0 ? localPlayerIndex : 0
-      if (drawnCardId !== null && playerIndex === expectedSelfIndex) {
+      if (drawnCardId !== null && playerIndex === expectedSelfIndex && !isParadoxEvent(drawnCardId)) {
         setDrawnCardFlashId(drawnCardId)
       }
     }
@@ -1774,7 +2212,7 @@ function App() {
     const targetsTimelineCard =
       pendingSelection.actionName === 'back_in_time' ||
       pendingSelection.actionName === 'local_reset' ||
-      pendingSelection.actionName === 'rewrite_event' ||
+      (pendingSelection.actionName === 'rewrite_event' && pendingSelection.step === 'choose_target') ||
       pendingSelection.actionName === 'time_swap'
 
     if (!targetsTimelineCard) {
@@ -1789,7 +2227,8 @@ function App() {
     }
 
     const visualActionCardId = sourceActionCardId ?? fallbackActionCardId(pendingSelection.actionName)
-    if (visualActionCardId !== null) {
+    const shouldShowSelectionPreview = pendingSelection.actionName !== 'rewrite_event'
+    if (visualActionCardId !== null && shouldShowSelectionPreview) {
       const isTargetingLocal = localPlayerIndex >= 0 && targetedPlayerIndex === localPlayerIndex
       const targetLabel = isTargetingLocal ? 'YOU' : gameBefore.players[targetedPlayerIndex]?.name ?? 'target'
       setTableCardPreview({
@@ -1886,17 +2325,35 @@ function App() {
     return () => window.clearTimeout(timeoutId)
   }, [isMobileViewport, timelineTargetCue])
 
+  const isVisualFlowBlockingAutoAction = Boolean(timelineActionProjectileActive || resourceFlowProjectileActive)
+
   useEffect(() => {
-    if (!resourceFlowCue || !tableBoardRef.current) {
+    if (!game || game.phase !== 'ACTION_SELECTION') {
+      return
+    }
+    if (
+      game.pendingActionSelection?.actionName === 'rewrite_event' &&
+      game.pendingActionSelection?.step === 'choose_rewrite_replacement'
+    ) {
+      setTableCardPreview(null)
+    }
+  }, [game])
+
+  useEffect(() => {
+    if (!resourceFlowCue || !tableBoardRef.current || !deckPileRef.current || !discardPileRef.current) {
+      setResourceFlowProjectile(null)
+      setResourceFlowProjectileActive(false)
       return
     }
 
     const board = tableBoardRef.current
     const boardRect = board.getBoundingClientRect()
     const seatElement = board.querySelector<HTMLElement>(`[data-seat-player='${resourceFlowCue.playerIndex}']`)
-    const deckAnchor = board.querySelector<HTMLElement>("[data-resource-anchor='deck']")
-    const discardAnchor = board.querySelector<HTMLElement>("[data-resource-anchor='discard']")
+    const deckAnchor = deckPileRef.current.querySelector<HTMLElement>("[data-resource-anchor='deck']")
+    const discardAnchor = discardPileRef.current.querySelector<HTMLElement>("[data-resource-anchor='discard']")
     if (!seatElement || !deckAnchor || !discardAnchor) {
+      setResourceFlowProjectile(null)
+      setResourceFlowProjectileActive(false)
       return
     }
 
@@ -1955,6 +2412,8 @@ function App() {
 
   useEffect(() => {
     if (!timelineTargetCue || !tableBoardRef.current) {
+      setTimelineActionProjectile(null)
+      setTimelineActionProjectileActive(false)
       return
     }
 
@@ -1966,6 +2425,8 @@ function App() {
     )
 
     if (!sourceElement || !targetElement) {
+      setTimelineActionProjectile(null)
+      setTimelineActionProjectileActive(false)
       return
     }
 
@@ -2077,6 +2538,37 @@ function App() {
 
     return
   }, [game?.winner])
+
+  useEffect(() => {
+    if (!game?.winner) {
+      return
+    }
+
+    if (networkMatchActive && !isLocalHost) {
+      return
+    }
+
+    const signature = `${networkMatchActive ? 'network' : tutorialActive ? 'tutorial' : 'local'}|${game.winner}|${game.players
+      .map((player) => `${player.name}:${player.hand.length}:${player.timeline.length}`)
+      .join('|')}|${actionTurnLog.length}`
+
+    if (lastPersistedMatchSignatureRef.current === signature) {
+      return
+    }
+
+    lastPersistedMatchSignatureRef.current = signature
+    const mode = networkMatchActive ? 'network' : tutorialActive ? 'tutorial' : 'local'
+    const roomCode = networkMatchActive ? roomInfo?.roomCode ?? null : null
+    void persistCompletedMatch(game, mode, roomCode)
+  }, [
+    actionTurnLog.length,
+    game,
+    isLocalHost,
+    networkMatchActive,
+    persistCompletedMatch,
+    roomInfo?.roomCode,
+    tutorialActive,
+  ])
 
   useEffect(() => {
     if (!networkMatchActive || !roomInfo?.rematchActive || !roomInfo.rematchDeadlineTs) {
@@ -2389,7 +2881,19 @@ function App() {
   }, [tutorialStepIndex])
 
   useEffect(() => {
-    if (!tutorialActive || tutorialCompleted || !game || !rules || networkMatchActive || isFutureRevealWindowActive) {
+    if (!game || game.phase !== 'ACTION_SELECTION') {
+      return
+    }
+    if (
+      game.pendingActionSelection?.actionName === 'rewrite_event' &&
+      game.pendingActionSelection?.step === 'choose_rewrite_replacement'
+    ) {
+      setSelectedHandTargetPlayerIndex(game.pendingActionSelection.playerIndex)
+    }
+  }, [game])
+
+  useEffect(() => {
+    if (!tutorialActive || tutorialCompleted || !game || !rules || networkMatchActive || isFutureRevealWindowActive || isVisualFlowBlockingAutoAction) {
       return
     }
 
@@ -2428,7 +2932,7 @@ function App() {
           setTutorialStepIndex((current) => (current === liveStepIndex ? next : current))
         },
       })
-    }, 820)
+    }, isMobileViewport ? 1500 : 1250)
 
     return () => window.clearTimeout(timeoutId)
   }, [
@@ -2438,6 +2942,8 @@ function App() {
     rules,
     networkMatchActive,
     isFutureRevealWindowActive,
+    isMobileViewport,
+    isVisualFlowBlockingAutoAction,
     dispatchGameAction,
   ])
 
@@ -2450,6 +2956,7 @@ function App() {
       !activePlayer.isBot ||
       networkMatchActive ||
       isFutureRevealWindowActive ||
+      isVisualFlowBlockingAutoAction ||
       (tutorialActive && !tutorialCompleted)
     ) {
       return
@@ -2478,7 +2985,7 @@ function App() {
             pushTurnLog(current, action, currentPlayer.name, updated)
             return updated
           }
-          const shouldDraw = Math.random() < BALANCED_DRAW_CHANCE
+          const shouldDraw = Math.random() < getBotDrawChance(botProfile)
           if (shouldDraw) {
             const action: GameAction = { type: 'draw_end_turn' }
             const updated = applyGameAction(current, rules, action)
@@ -2496,7 +3003,7 @@ function App() {
 
         if (current.phase === 'REACTION_WINDOW' && current.pendingPlay?.nextResponder === current.currentPlayerIndex) {
           const canCancel = canCurrentReactorCancel(current)
-          if (canCancel && Math.random() < BALANCED_CANCEL_CHANCE) {
+          if (canCancel && Math.random() < getBotCancelChance(botProfile)) {
             const action: GameAction = { type: 'cancel_reaction' }
             const updated = applyGameAction(current, rules, action)
             markRecentAction(actorIndex, action, current, updated)
@@ -2528,7 +3035,7 @@ function App() {
           if (targets.length === 0) {
             return current
           }
-          const chosenTarget = targets[Math.floor(Math.random() * targets.length)]
+          const chosenTarget = chooseBotActionSelectionTarget(current, targets, botProfile)
           if (current.pendingActionSelection?.actionName === 'future_peek') {
             const action: GameAction = { type: 'select_future_target', targetPlayerIndex: chosenTarget }
             const updated = applyGameAction(current, rules, action)
@@ -2545,14 +3052,16 @@ function App() {
 
         return current
       })
-    }, isMobileViewport ? 1350 : 950)
+    }, isMobileViewport ? 1750 : 1450)
 
     return () => window.clearTimeout(timeoutId)
   }, [
     activePlayer,
+    botProfile,
     game,
     isMobileViewport,
     isFutureRevealWindowActive,
+    isVisualFlowBlockingAutoAction,
     markRecentAction,
     networkMatchActive,
     pushTurnLog,
@@ -2562,7 +3071,7 @@ function App() {
   ])
 
   useEffect(() => {
-    if (!game || !rules || !networkMatchActive || !roomInfo || game.winner || isFutureRevealWindowActive) {
+    if (!game || !rules || !networkMatchActive || !roomInfo || game.winner || isFutureRevealWindowActive || isVisualFlowBlockingAutoAction) {
       return
     }
 
@@ -2582,7 +3091,7 @@ function App() {
           return
         }
 
-        const shouldDraw = Math.random() < BALANCED_DRAW_CHANCE
+        const shouldDraw = Math.random() < getBotDrawChance(botProfile)
         if (shouldDraw) {
           dispatchGameAction({ type: 'draw_end_turn' }, { proxyNickname, bypassUserInputLock: true })
           return
@@ -2595,7 +3104,7 @@ function App() {
 
       if (game.phase === 'REACTION_WINDOW' && game.pendingPlay?.nextResponder === game.currentPlayerIndex) {
         const canCancel = canCurrentReactorCancel(game)
-        if (canCancel && Math.random() < BALANCED_CANCEL_CHANCE) {
+        if (canCancel && Math.random() < getBotCancelChance(botProfile)) {
           dispatchGameAction({ type: 'cancel_reaction' }, { proxyNickname, bypassUserInputLock: true })
           return
         }
@@ -2618,21 +3127,24 @@ function App() {
         if (targets.length === 0) {
           return
         }
-        const chosenTarget = targets[Math.floor(Math.random() * targets.length)]
+        const chosenTarget = chooseBotActionSelectionTarget(game, targets, botProfile)
         if (game.pendingActionSelection?.actionName === 'future_peek') {
           dispatchGameAction({ type: 'select_future_target', targetPlayerIndex: chosenTarget }, { proxyNickname, bypassUserInputLock: true })
           return
         }
         dispatchGameAction({ type: 'select_action_target', cardId: chosenTarget }, { proxyNickname, bypassUserInputLock: true })
       }
-    }, 1100)
+    }, isMobileViewport ? 1850 : 1550)
 
     return () => window.clearTimeout(timeoutId)
   }, [
+    botProfile,
     dispatchGameAction,
     game,
     isDisconnectedSeatTurn,
     isFutureRevealWindowActive,
+    isMobileViewport,
+    isVisualFlowBlockingAutoAction,
     isLocalHost,
     networkMatchActive,
     roomInfo,
@@ -2645,6 +3157,7 @@ function App() {
       tutorialActive ||
       tutorialCompleted ||
       isFutureRevealWindowActive ||
+      isVisualFlowBlockingAutoAction ||
       game.phase !== 'ACTION_SELECTION' ||
       !game.pendingActionSelection
     ) {
@@ -2676,15 +3189,16 @@ function App() {
       (game.pendingActionSelection.actionName === 'paradox_swap' && game.pendingActionSelection.step === 'choose_target')
 
     if (isPlayerTargetSelection) {
-      dispatchGameAction({ type: 'select_future_target', targetPlayerIndex: target })
+      dispatchGameAction({ type: 'select_future_target', targetPlayerIndex: target }, { bypassUserInputLock: true })
       return
     }
 
-    dispatchGameAction({ type: 'select_action_target', cardId: target })
+    dispatchGameAction({ type: 'select_action_target', cardId: target }, { bypassUserInputLock: true })
   }, [
     dispatchGameAction,
     game,
     isFutureRevealWindowActive,
+    isVisualFlowBlockingAutoAction,
     localPlayerIndex,
     networkMatchActive,
     tutorialActive,
@@ -2820,15 +3334,53 @@ function App() {
     tutorialCompleted,
   ])
 
+  const networkStatusKind = getNetworkStatusKind(networkStatus)
+  const appVisualStyle = {
+    '--ui-font-scale': String(uiFontScale),
+    '--ui-card-scale': String(uiCardScale),
+  } as AppCssVars
+
+  const renderNicknameModal = () =>
+    isNicknameModalOpen ? (
+      <div className="nickname-modal-backdrop">
+        <section className="nickname-modal" role="dialog" aria-modal="true" aria-label="Nickname required">
+          <h3>{language === 'pt' ? 'Defina seu nickname' : 'Set your nickname'}</h3>
+          <p>
+            {language === 'pt'
+              ? 'É obrigatório informar um nome (mínimo 2 caracteres) para iniciar local, tutorial e LAN.'
+              : 'A name is required (minimum 2 characters) before local, tutorial and LAN starts.'}
+          </p>
+          <input
+            value={nicknameDraft}
+            maxLength={20}
+            onChange={(event) => setNicknameDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                saveNicknameDraft()
+              }
+            }}
+            autoFocus
+          />
+          <div className="actions" style={{ marginTop: '0.6rem' }}>
+            <button type="button" onClick={saveNicknameDraft}>
+              {language === 'pt' ? 'Confirmar' : 'Confirm'}
+            </button>
+          </div>
+        </section>
+      </div>
+    ) : null
+
   if (!rules) {
     return (
-      <main className="app-shell app-home">
+      <main className={`app-shell app-home ${uiContrastMode === 'high' ? 'contrast-high' : ''}`.trim()} style={appVisualStyle}>
         <section className="home-hero home-loading">
           <div className="home-hero-copy">
             <h1>Temporis</h1>
             <p>{language === 'pt' ? 'Preparando experiência de jogo...' : 'Preparing game experience...'}</p>
           </div>
         </section>
+        {renderNicknameModal()}
       </main>
     )
   }
@@ -2838,14 +3390,14 @@ function App() {
     const readyCount = roomInfo.loadingReadyPlayerIndexes.length
 
     return (
-      <main className="app-shell app-home">
+      <main className={`app-shell app-home ${uiContrastMode === 'high' ? 'contrast-high' : ''}`.trim()} style={appVisualStyle}>
         <section className="home-hero">
           <div className="home-hero-copy">
             <h1>{rules.game.name}</h1>
             <p>{language === 'pt' ? 'Sala em preparação' : 'Room preparing'}</p>
           </div>
           <div className="home-hero-badges">
-            <span className="home-chip">
+            <span className={`home-chip network-status-badge ${networkStatusKind}`}>
               <span className="ui-icon chip-status" aria-hidden="true" />
               {language === 'pt' ? 'Rede' : 'Network'}: {networkStatus}
             </span>
@@ -2883,6 +3435,7 @@ function App() {
             </ol>
           </article>
         </section>
+        {renderNicknameModal()}
       </main>
     )
   }
@@ -2890,7 +3443,7 @@ function App() {
   if (!game || !activePlayer) {
     if (networkMatchActive) {
       return (
-        <main className="app-shell app-home">
+        <main className={`app-shell app-home ${uiContrastMode === 'high' ? 'contrast-high' : ''}`.trim()} style={appVisualStyle}>
           <section className="home-hero">
             <div className="home-hero-copy">
               <h1>{rules.game.name}</h1>
@@ -2926,13 +3479,14 @@ function App() {
             )}
             </article>
           </section>
+          {renderNicknameModal()}
         </main>
       )
     }
 
     if (homeView === 'rules') {
       return (
-        <main className="app-shell app-home">
+        <main className={`app-shell app-home ${uiContrastMode === 'high' ? 'contrast-high' : ''}`.trim()} style={appVisualStyle}>
           <section className="home-hero">
             <div className="home-hero-copy">
               <h1>{rules.game.name}</h1>
@@ -3040,12 +3594,13 @@ function App() {
               </div>
             </article>
           </section>
+          {renderNicknameModal()}
         </main>
       )
     }
 
     return (
-      <main className="app-shell app-home">
+      <main className={`app-shell app-home ${uiContrastMode === 'high' ? 'contrast-high' : ''}`.trim()} style={appVisualStyle}>
         <section className="home-hero">
           <div className="home-hero-copy">
             <h1>{rules.game.name}</h1>
@@ -3088,6 +3643,14 @@ function App() {
                   ))}
                 </select>
               </label>
+              <label>
+                <span>{language === 'pt' ? 'Perfil do bot' : 'Bot profile'}</span>
+                <select value={botProfile} onChange={(event) => setBotProfile(event.target.value as BotProfile)}>
+                  <option value="balanced">{language === 'pt' ? 'Balanceado' : 'Balanced'}</option>
+                  <option value="aggressive">{language === 'pt' ? 'Agressivo' : 'Aggressive'}</option>
+                  <option value="random">{language === 'pt' ? 'Aleatório' : 'Random'}</option>
+                </select>
+              </label>
             </div>
 
             <div className="setup-stat-grid">
@@ -3097,7 +3660,7 @@ function App() {
               </div>
               <div className="setup-stat-tile">
                 <span>Bots</span>
-                <strong>{totalPlayers - 1}</strong>
+                <strong>{totalPlayers - 1} · {formatBotProfile(botProfile, language)}</strong>
               </div>
               <div className="setup-stat-tile">
                 <span>{language === 'pt' ? 'Recursos' : 'Assets'}</span>
@@ -3109,6 +3672,9 @@ function App() {
               <button
                 type="button"
                 onClick={() => {
+                  if (!ensureNicknameReady()) {
+                    return
+                  }
                   resetMatchUiState()
                   setTutorialActive(false)
                   setTutorialCompleted(false)
@@ -3120,6 +3686,7 @@ function App() {
                       startingTimeline: rules.setup.standard.starting_timeline,
                       totalPlayers,
                       botCount: totalPlayers - 1,
+                      playerRoster: buildLocalRoster(totalPlayers),
                     }),
                   )
                 }}
@@ -3160,7 +3727,7 @@ function App() {
             <div className="setup-stat-grid compact">
               <div className="setup-stat-tile">
                 <span>{language === 'pt' ? 'Status de rede' : 'Network status'}</span>
-                <strong>{networkStatus}</strong>
+                <strong className={`network-status-badge ${networkStatusKind}`}>{networkStatus}</strong>
               </div>
               <div className="setup-stat-tile">
                 <span>{language === 'pt' ? 'Recursos' : 'Assets'}</span>
@@ -3268,12 +3835,81 @@ function App() {
               </div>
             )}
           </article>
+
+          <article className="status-panel setup-card">
+            <div className="setup-card-title-row">
+              <h2>{language === 'pt' ? 'Acessibilidade' : 'Accessibility'}</h2>
+              <span className="setup-card-pill">UI</span>
+            </div>
+            <div className="setup-form-grid">
+              <label>
+                <span>{language === 'pt' ? 'Contraste' : 'Contrast'}</span>
+                <select
+                  value={uiContrastMode}
+                  onChange={(event) => setUiContrastMode(event.target.value as 'default' | 'high')}
+                >
+                  <option value="default">{language === 'pt' ? 'Padrão' : 'Default'}</option>
+                  <option value="high">{language === 'pt' ? 'Alto contraste' : 'High contrast'}</option>
+                </select>
+              </label>
+              <label>
+                <span>{language === 'pt' ? 'Escala de fonte' : 'Font scale'}: {uiFontScale.toFixed(2)}x</span>
+                <input
+                  type="range"
+                  min={0.9}
+                  max={1.2}
+                  step={0.05}
+                  value={uiFontScale}
+                  onChange={(event) => setUiFontScale(Number(event.target.value))}
+                />
+              </label>
+              <label>
+                <span>{language === 'pt' ? 'Escala das cartas' : 'Card scale'}: {uiCardScale.toFixed(2)}x</span>
+                <input
+                  type="range"
+                  min={0.9}
+                  max={1.2}
+                  step={0.05}
+                  value={uiCardScale}
+                  onChange={(event) => setUiCardScale(Number(event.target.value))}
+                />
+              </label>
+            </div>
+          </article>
+
+          <article className="status-panel setup-card">
+            <div className="setup-card-title-row">
+              <h2>{language === 'pt' ? 'Leaderboard' : 'Leaderboard'}</h2>
+              <div className="actions" style={{ gap: '0.35rem' }}>
+                <button type="button" onClick={() => loadLeaderboard()} disabled={isLeaderboardLoading}>
+                  {language === 'pt' ? 'Atualizar' : 'Refresh'}
+                </button>
+              </div>
+            </div>
+            {leaderboardError ? <div className="setup-error-line">{leaderboardError}</div> : null}
+            <ol className="room-list leaderboard-list">
+              {isLeaderboardLoading && leaderboard.length === 0 ? (
+                <li>{language === 'pt' ? 'Carregando ranking...' : 'Loading leaderboard...'}</li>
+              ) : leaderboard.length === 0 ? (
+                <li>{language === 'pt' ? 'Sem dados ainda.' : 'No data yet.'}</li>
+              ) : (
+                leaderboard.map((entry, index) => (
+                  <li key={`leaderboard-${entry.nickname}-${index}`}>
+                    <strong>{index + 1}. {entry.nickname}</strong> • {entry.wins}W/{entry.losses}L • {entry.gamesPlayed}{' '}
+                    {language === 'pt' ? 'partidas' : 'games'}
+                  </li>
+                ))
+              )}
+            </ol>
+          </article>
         </section>
+        {renderNicknameModal()}
       </main>
     )
   }
 
   const tutorialStep = tutorialActive && !tutorialCompleted ? TUTORIAL_STEPS[tutorialStepIndex] ?? null : null
+  const tutorialHighlightZone = tutorialActive && !tutorialCompleted ? getTutorialHighlightZone(tutorialStep?.action ?? null) : null
   const tutorialHint = tutorialStep
     ? language === 'pt'
       ? tutorialStep.hintPt
@@ -3285,6 +3921,10 @@ function App() {
       : null
 
   function startGuidedTutorial() {
+    if (!ensureNicknameReady()) {
+      return
+    }
+
     resetMatchUiState()
     setHomeView('setup')
     setTutorialActive(true)
@@ -3295,7 +3935,7 @@ function App() {
     setTotalPlayers(2)
     setNetworkMatchActive(false)
     setLocalPlayerIndex(0)
-    setGame(buildTutorialGameState())
+    setGame(buildTutorialGameState(normalizeNickname(nickname)))
   }
 
   function exitGuidedTutorialToHome() {
@@ -3375,6 +4015,10 @@ function App() {
   }
 
   const onRestart = () => {
+    if (!ensureNicknameReady()) {
+      return
+    }
+
     if (tutorialActive) {
       startGuidedTutorial()
       return
@@ -3387,6 +4031,7 @@ function App() {
         startingTimeline: rules.setup.standard.starting_timeline,
         totalPlayers,
         botCount: totalPlayers - 1,
+        playerRoster: buildLocalRoster(totalPlayers),
       }),
     )
   }
@@ -3429,11 +4074,6 @@ function App() {
     }
     setChatInput('')
   }
-
-  const visibleActionLog =
-    logFilter === 'all'
-      ? actionTurnLog
-      : actionTurnLog.filter((entry) => entry.turn === currentTurnNumber)
 
   const onResolvePending = () => {
     dispatchTutorialAwareAction({ type: 'pass_reaction' }, 'player')
@@ -3487,6 +4127,36 @@ function App() {
         game.pendingActionSelection?.step === 'choose_target'))
   const isCardTargetSelection =
     game.phase === 'ACTION_SELECTION' && Boolean(game.pendingActionSelection) && canControlPendingActionSelection && !isPlayerTargetSelection
+  const isRewriteReplacementSelection =
+    game.phase === 'ACTION_SELECTION' &&
+    game.pendingActionSelection?.actionName === 'rewrite_event' &&
+    game.pendingActionSelection?.step === 'choose_rewrite_replacement'
+  const isTimelineTargetSelection = isCardTargetSelection && !isRewriteReplacementSelection
+  const selectableHandTargetsByPlayer = isCardTargetSelection
+    ? game.players
+        .map((player, index) => ({
+        playerIndex: index,
+        playerName: player.name,
+        selectableCardIds: player.hand.filter((cardId) => selectableActionCardIds.includes(cardId)),
+        }))
+        .filter((entry) =>
+          isRewriteReplacementSelection
+            ? entry.playerIndex === (game.pendingActionSelection?.playerIndex ?? -1)
+            : true,
+        )
+    : []
+  const selectableHandTargetPlayerIndexes = selectableHandTargetsByPlayer
+    .filter((entry) => entry.selectableCardIds.length > 0)
+    .map((entry) => entry.playerIndex)
+  const isHandTargetPickerVisible =
+    isCardTargetSelection && !isRewriteReplacementSelection && selectableHandTargetPlayerIndexes.length > 0
+  const effectiveHandTargetPlayerIndex =
+    selectedHandTargetPlayerIndex !== null && selectableHandTargetPlayerIndexes.includes(selectedHandTargetPlayerIndex)
+      ? selectedHandTargetPlayerIndex
+      : selectableHandTargetPlayerIndexes[0] ?? null
+  const selectedHandTargetPlayer =
+    selectableHandTargetsByPlayer.find((entry) => entry.playerIndex === effectiveHandTargetPlayerIndex) ?? null
+  const selectedHandTargetCardIds = selectedHandTargetPlayer?.selectableCardIds ?? []
   const isSelfPlayWindow =
     selfPlayerIndex === game.currentPlayerIndex &&
     !game.winner &&
@@ -3504,16 +4174,20 @@ function App() {
     canControlPendingActionSelection &&
     game.pendingActionSelection?.playerIndex === selfPlayerIndex &&
     selfPlayer !== null &&
-    selfPlayer.hand.some((cardId) => selectableActionCardIds.includes(cardId))
+    (isRewriteReplacementSelection
+      ? selfPlayer.hand.some((cardId) => selectableActionCardIds.includes(cardId))
+      : isHandTargetPickerVisible
+      ? selectedHandTargetPlayer?.playerIndex === selfPlayerIndex && selectedHandTargetCardIds.length > 0
+      : selfPlayer.hand.some((cardId) => selectableActionCardIds.includes(cardId)))
   const showSelfHandRow = selfPlayer !== null
-  const isTimelineSelectionActive = isCardTargetSelection && isLocalController && !isFutureRevealWindowActive
+  const isTimelineSelectionActive = isTimelineTargetSelection && isLocalController && !isFutureRevealWindowActive
   const selfHasSelectableTimelineCard = Boolean(
     isTimelineSelectionActive &&
       selfPlayer !== null &&
       selfPlayer.timeline.some((entry) => selectableActionCardIds.includes(entry.id)),
   )
   const isOpponentTimelineSelectionMode = Boolean(
-    isTimelineSelectionActive && !isSelfHandTargetSelection && !selfHasSelectableTimelineCard,
+    isTimelineSelectionActive && !isHandTargetPickerVisible && !isSelfHandTargetSelection && !selfHasSelectableTimelineCard,
   )
   const isTableTargetSelectionMode = isPlayerTargetSelection || isOpponentTimelineSelectionMode
   const latestDiscardCardId = game.discardPile.length > 0 ? game.discardPile[game.discardPile.length - 1] : null
@@ -3572,7 +4246,10 @@ function App() {
 
   const firstDiscardCardId = isSelfDiscardWindow && selfPlayer && selfPlayer.hand.length > 0 ? selfPlayer.hand[0] : null
 
-  const firstSelectableTarget = selectableActionCardIds[0] ?? null
+  const firstSelectableTarget =
+    isHandTargetPickerVisible && selectedHandTargetCardIds.length > 0
+      ? selectedHandTargetCardIds[0]
+      : selectableActionCardIds[0] ?? null
 
   const quickActions = (() => {
     const actions: Array<{
@@ -3830,7 +4507,8 @@ function App() {
   return (
     <main
       ref={appShellRef}
-      className={`app-shell ${isFocusMode ? 'focus-mode' : ''} ${isMobileViewport ? 'mobile-viewport' : ''} ${isMobileFullscreen ? 'mobile-fullscreen' : ''}`.trim()}
+      className={`app-shell ${uiContrastMode === 'high' ? 'contrast-high' : ''} ${isFocusMode ? 'focus-mode' : ''} ${isMobileViewport ? 'mobile-viewport' : ''} ${isMobileFullscreen ? 'mobile-fullscreen' : ''}`.trim()}
+      style={appVisualStyle}
     >
       {!isFocusMode && (
       <>
@@ -3918,6 +4596,10 @@ function App() {
               <strong>Sync:</strong> {lastAppliedActionSeq}
             </span>
           )}
+          <span className={`hud-chip network-status-badge ${networkStatusKind}`} data-kind="network">
+            <span className="ui-icon chip-status" aria-hidden="true" />
+            <strong>{language === 'pt' ? 'Rede:' : 'Network:'}</strong> {networkStatus}
+          </span>
           {game.winner && (
             <span className="hud-chip" data-kind="winner">
               <span className="ui-icon chip-winner" aria-hidden="true" />
@@ -3930,8 +4612,8 @@ function App() {
             <span className="ui-icon chip-warning" aria-hidden="true" />
             <strong>{language === 'pt' ? 'Bot proxy:' : 'Proxy bot:'}</strong>{' '}
             {language === 'pt'
-              ? `${roomInfo.players[game.currentPlayerIndex]?.nickname} está desconectado. O host está jogando automaticamente este turno (perfil: ${BOT_PROFILE}).`
-              : `${roomInfo.players[game.currentPlayerIndex]?.nickname} is disconnected. Host is auto-playing this turn (profile: ${BOT_PROFILE}).`}
+              ? `${roomInfo.players[game.currentPlayerIndex]?.nickname} está desconectado. O host está jogando automaticamente este turno (perfil: ${formatBotProfile(botProfile, language)}).`
+              : `${roomInfo.players[game.currentPlayerIndex]?.nickname} is disconnected. Host is auto-playing this turn (profile: ${formatBotProfile(botProfile, language)}).`}
           </div>
         )}
       </section>
@@ -3941,7 +4623,7 @@ function App() {
       <section className={`table-layout table-mode ${game.winner ? 'game-over-dim' : ''}`}>
         <div
           ref={tableBoardRef}
-          className={`table-board count-${opponentIndices.length} ${isTableTargetSelectionMode ? 'target-selection-mode' : ''}`}
+          className={`table-board count-${opponentIndices.length} ${isTableTargetSelectionMode ? 'target-selection-mode' : ''} ${tutorialHighlightZone ? `tutorial-zone-${tutorialHighlightZone}` : ''}`}
         >
           {isFocusMode && !isMobileViewport && (
             <button type="button" className="focus-toggle-floating" onClick={() => setIsFocusMode(false)}>
@@ -3969,6 +4651,7 @@ function App() {
             </div>
           )}
           <div
+            ref={deckPileRef}
             className={`resource-pile deck ${game.deck.length > 2 ? 'stack-deep' : game.deck.length > 1 ? 'stack-mid' : ''}`}
           >
             <div className="resource-count">{game.deck.length}</div>
@@ -4112,6 +4795,20 @@ function App() {
                   </span>
                 ))}
               </div>
+              <div className="game-over-summary-grid">
+                <div className="setup-stat-tile">
+                  <span>{language === 'pt' ? 'Turnos' : 'Turns'}</span>
+                  <strong>{currentTurnNumber}</strong>
+                </div>
+                <div className="setup-stat-tile">
+                  <span>{language === 'pt' ? 'Deck restante' : 'Deck left'}</span>
+                  <strong>{game.deck.length}</strong>
+                </div>
+                <div className="setup-stat-tile">
+                  <span>{language === 'pt' ? 'Descarte final' : 'Final discard'}</span>
+                  <strong>{game.discardPile.length}</strong>
+                </div>
+              </div>
 
               {networkMatchActive && roomInfo?.rematchActive ? (
                 <>
@@ -4204,6 +4901,52 @@ function App() {
                   ))}
                 </div>
               )}
+              {isHandTargetPickerVisible && (
+                <div className="hand-target-picker">
+                  <div className="hand-target-picker-title">
+                    {language === 'pt'
+                      ? 'Escolha o jogador e depois a carta da mão'
+                      : 'Choose player first, then pick a hand card'}
+                  </div>
+                  <div className="hand-target-player-row">
+                    {selectableHandTargetsByPlayer.map((entry) => {
+                      const isSelected = selectedHandTargetPlayer?.playerIndex === entry.playerIndex
+                      const isEnabled = entry.selectableCardIds.length > 0
+                      return (
+                        <button
+                          key={`hand-target-player-${entry.playerIndex}`}
+                          type="button"
+                          className={`hand-target-player-button ${isSelected ? 'active' : ''}`}
+                          onClick={() => setSelectedHandTargetPlayerIndex(entry.playerIndex)}
+                          disabled={!isEnabled || isFutureRevealWindowActive}
+                        >
+                          <span>{entry.playerName}</span>
+                          <span className="hand-target-player-count">{entry.selectableCardIds.length}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="hand-target-card-row">
+                    {selectedHandTargetCardIds.length === 0 ? (
+                      <span className="panel-lock-note">
+                        {language === 'pt' ? 'Nenhuma carta disponível nesta mão.' : 'No available cards in this hand.'}
+                      </span>
+                    ) : (
+                      selectedHandTargetCardIds.map((cardId) => (
+                        <CardImage
+                          key={`hand-target-card-${selectedHandTargetPlayer?.playerIndex ?? 'none'}-${cardId}`}
+                          id={cardId}
+                          locale={language}
+                          width={84}
+                          onClick={() => onSelectActionTarget(cardId)}
+                          disabled={isFutureRevealWindowActive}
+                          className="hand-target-card"
+                        />
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
               {tutorialActive && (
                 <div className={`table-tutorial-popup ${tutorialCompleted ? 'done' : ''}`}>
                   <div className="table-tutorial-title">
@@ -4291,12 +5034,21 @@ function App() {
                 )}
               {isPlayerTargetSelection &&
                 renderPromptSub('player', language === 'pt' ? 'Clique no assento de um jogador.' : 'Click a player seat.')}
+              {isHandTargetPickerVisible &&
+                renderPromptSub(
+                  'hand',
+                  language === 'pt'
+                    ? 'Use a caixa para escolher jogador e carta da mão.'
+                    : 'Use the box to pick a player and a hand card.',
+                )}
               {isSelfHandTargetSelection &&
+                !isHandTargetPickerVisible &&
                 renderPromptSub(
                   'hand',
                   language === 'pt' ? 'Clique em uma carta destacada na sua mão.' : 'Click a highlighted card in your hand.',
                 )}
               {isCardTargetSelection &&
+                !isHandTargetPickerVisible &&
                 !isSelfHandTargetSelection &&
                 renderPromptSub(
                   'timeline',
@@ -4462,48 +5214,6 @@ function App() {
       )}
 
       <div className="floating-overlay-stack">
-        {isLogOpen ? (
-          <section className="floating-panel">
-            <div className="floating-panel-header">
-              <strong>{language === 'pt' ? 'Log de Turnos' : 'Turn Log'}</strong>
-              <button type="button" className="popup-close-button" onClick={() => setIsLogOpen(false)} aria-label="Close log">
-                ×
-              </button>
-            </div>
-            <div className="actions" style={{ marginTop: '0.45rem' }}>
-              <button type="button" onClick={() => setLogFilter('current')} disabled={logFilter === 'current'}>
-                {language === 'pt' ? 'Turno Atual' : 'Current Turn'}
-              </button>
-              <button type="button" onClick={() => setLogFilter('all')} disabled={logFilter === 'all'}>
-                {language === 'pt' ? 'Todos' : 'All'}
-              </button>
-            </div>
-            <ol className="action-log-list">
-              {visibleActionLog.length === 0 ? (
-                <li className="action-log-empty">
-                  <span className="ui-icon log" aria-hidden="true" />
-                  {language === 'pt' ? 'Nenhuma ação para este filtro.' : 'No actions for this filter.'}
-                </li>
-              ) : (
-                visibleActionLog.map((entry) => {
-                  const actionTag = getActionLogTag(entry.text)
-                  return (
-                  <li key={entry.id} className="action-log-item">
-                    <span className={`action-log-tag ${actionTag.toLowerCase()}`}>{actionTag}</span>{' '}
-                    <span className="chat-time">[{formatTime(entry.timestamp)}]</span> {redactDrawDetails(entry.text)}
-                  </li>
-                  )
-                })
-              )}
-            </ol>
-          </section>
-        ) : (
-          <button type="button" className="floating-bubble" onClick={() => setIsLogOpen(true)}>
-            <span className="ui-icon log" aria-hidden="true" />
-            {language === 'pt' ? 'Log' : 'Log'}
-          </button>
-        )}
-
         {isChatOpen ? (
           <section className="floating-panel">
             <div className="floating-panel-header">
@@ -4568,6 +5278,8 @@ function App() {
           </button>
         )}
       </div>
+
+      {renderNicknameModal()}
     </main>
   )
 }

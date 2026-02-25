@@ -107,6 +107,7 @@ export interface PendingActionSelection {
   nextPlayerIndex: number
   step: ActionSelectionStep
   selectedSourceCardId?: number
+  selectedSourceTimelineIndex?: number
   sourceCardId?: number
 }
 
