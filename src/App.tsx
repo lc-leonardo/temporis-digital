@@ -505,7 +505,7 @@ function matchesTutorialAction(expected: GameAction, actual: GameAction): boolea
 
 function buildTutorialGameState(playerNickname: string, botNickname: string = 'Chrono Bot'): GameState {
   const playerHand = [1, 21, 22, 41, 42, 61, 75, 85, 93, 99, 107, 113]
-  const botHand = [2, 23, 24, 43, 86]
+  const botHand = [2, 23, 43, 86]
 
   const usedCards = new Set<number>([...playerHand, ...botHand, 24])
   const deck = ALL_CARD_IDS.filter((cardId) => !usedCards.has(cardId))

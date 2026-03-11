@@ -1180,6 +1180,106 @@ function runScenarioAllHandsEmptyDeckHasCardsContinues(rules: TemporisRules): st
   return null
 }
 
+function runScenarioGuidedTutorialFullSequence(rules: TemporisRules): string | null {
+  const playerHand = [1, 21, 22, 41, 42, 61, 75, 85, 93, 99, 107, 113]
+  const botHand = [2, 23, 43, 86]
+  const usedCards = new Set<number>([...playerHand, ...botHand, 24])
+  const deck = Array.from({ length: 120 }, (_, index) => index + 1).filter((cardId) => !usedCards.has(cardId))
+
+  let game: GameState = {
+    timelineTarget: 7,
+    deck,
+    discardPile: [],
+    players: [
+      { id: 0, name: 'You', isBot: false, hand: [...playerHand], timeline: [] },
+      { id: 1, name: 'Bot 1', isBot: true, hand: [...botHand], timeline: [{ id: 24, era: 'present' }] },
+    ],
+    currentPlayerIndex: 0,
+    phase: 'PLAYER_CHOICE',
+    pendingPlay: null,
+    pendingDiscard: null,
+    pendingActionSelection: null,
+    pendingFuturePeek: null,
+    pendingForcedSkips: null,
+    lastFutureReveal: null,
+    reactionHistory: [],
+    statusText: 'Scenario setup',
+    winner: null,
+  }
+
+  const steps: Array<{ actor: 'player' | 'bot'; action: GameAction }> = [
+    { actor: 'player', action: { type: 'play_card', cardId: 1 } },
+    { actor: 'bot', action: { type: 'pass_reaction' } },
+    { actor: 'bot', action: { type: 'play_card', cardId: 23 } },
+    { actor: 'player', action: { type: 'cancel_reaction' } },
+    { actor: 'bot', action: { type: 'pass_reaction' } },
+    { actor: 'player', action: { type: 'play_card', cardId: 21 } },
+    { actor: 'bot', action: { type: 'pass_reaction' } },
+    { actor: 'player', action: { type: 'discard_pending_event', cardId: 22 } },
+    { actor: 'bot', action: { type: 'draw_end_turn' } },
+    { actor: 'player', action: { type: 'play_card', cardId: 41 } },
+    { actor: 'bot', action: { type: 'pass_reaction' } },
+    { actor: 'player', action: { type: 'select_future_target', targetPlayerIndex: 1 } },
+    { actor: 'bot', action: { type: 'pass_reaction' } },
+    { actor: 'bot', action: { type: 'play_card', cardId: 2 } },
+    { actor: 'player', action: { type: 'pass_reaction' } },
+    { actor: 'player', action: { type: 'play_card', cardId: 61 } },
+    { actor: 'bot', action: { type: 'pass_reaction' } },
+    { actor: 'player', action: { type: 'select_action_target', cardId: 1 } },
+    { actor: 'player', action: { type: 'select_future_target', targetPlayerIndex: 1 } },
+    { actor: 'bot', action: { type: 'draw_end_turn' } },
+    { actor: 'player', action: { type: 'play_card', cardId: 93 } },
+    { actor: 'bot', action: { type: 'pass_reaction' } },
+    { actor: 'player', action: { type: 'select_action_target', cardId: 21 } },
+    { actor: 'player', action: { type: 'select_action_target', cardId: 42 } },
+    { actor: 'bot', action: { type: 'draw_end_turn' } },
+    { actor: 'player', action: { type: 'play_card', cardId: 113 } },
+    { actor: 'bot', action: { type: 'pass_reaction' } },
+    { actor: 'player', action: { type: 'select_action_target', cardId: 42 } },
+    { actor: 'player', action: { type: 'select_action_target', cardId: 24 } },
+    { actor: 'bot', action: { type: 'draw_end_turn' } },
+    { actor: 'player', action: { type: 'play_card', cardId: 75 } },
+    { actor: 'bot', action: { type: 'pass_reaction' } },
+    { actor: 'player', action: { type: 'select_action_target', cardId: 42 } },
+    { actor: 'bot', action: { type: 'draw_end_turn' } },
+    { actor: 'player', action: { type: 'play_card', cardId: 99 } },
+    { actor: 'bot', action: { type: 'pass_reaction' } },
+    { actor: 'player', action: { type: 'select_action_target', cardId: 2 } },
+    { actor: 'bot', action: { type: 'draw_end_turn' } },
+    { actor: 'player', action: { type: 'play_card', cardId: 107 } },
+    { actor: 'bot', action: { type: 'pass_reaction' } },
+  ]
+
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index]
+    const expectedActorIndex = step.actor === 'player' ? 0 : 1
+    if (game.currentPlayerIndex !== expectedActorIndex) {
+      return `Scenario failed: tutorial step ${index + 1} expected actor ${step.actor} but currentPlayerIndex=${game.currentPlayerIndex} in phase=${game.phase}.`
+    }
+
+    const updated = applyValidAction(game, rules, step.action)
+    if (!updated) {
+      return `Scenario failed: tutorial step ${index + 1} action ${JSON.stringify(step.action)} had no effect (phase=${game.phase}, status=${game.statusText}).`
+    }
+
+    const conservation = assertCardConservation(updated)
+    if (conservation) {
+      return `Scenario failed: tutorial step ${index + 1} broke card conservation: ${conservation}.`
+    }
+
+    game = updated
+  }
+
+  if (game.phase !== 'PLAYER_CHOICE' || game.currentPlayerIndex !== 0) {
+    return `Scenario failed: tutorial should end on player turn in PLAYER_CHOICE. Got phase=${game.phase} currentPlayerIndex=${game.currentPlayerIndex}.`
+  }
+  if (game.pendingPlay || game.pendingDiscard || game.pendingActionSelection || game.pendingFuturePeek) {
+    return 'Scenario failed: tutorial ended with unresolved pending state.'
+  }
+
+  return null
+}
+
 function runFuzz(
   rules: TemporisRules,
   games: number,
@@ -1329,6 +1429,7 @@ function run() {
     { name: 'present_discard_then_draw_flow', run: () => runScenarioPresentDiscardThenDrawFlow(rules) },
     { name: 'deck_empty_winner_by_tiebreak', run: () => runScenarioDeckEmptyWinnerByTieBreak(rules) },
     { name: 'all_hands_empty_deck_has_cards_continues', run: () => runScenarioAllHandsEmptyDeckHasCardsContinues(rules) },
+    { name: 'guided_tutorial_full_sequence', run: () => runScenarioGuidedTutorialFullSequence(rules) },
   ]
 
   console.log('Running deterministic rule scenarios...')
