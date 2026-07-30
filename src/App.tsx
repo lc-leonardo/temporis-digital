@@ -94,22 +94,6 @@ function getNetworkStatusKind(status: string): 'online' | 'progress' | 'error' |
   return 'offline'
 }
 
-function getTutorialHighlightZone(action: GameAction | null): 'hand' | 'timeline' | 'seats' | 'reaction' | null {
-  if (!action) {
-    return null
-  }
-  if (action.type === 'cancel_reaction' || action.type === 'pass_reaction') {
-    return 'reaction'
-  }
-  if (action.type === 'select_future_target') {
-    return 'seats'
-  }
-  if (action.type === 'select_action_target') {
-    return 'timeline'
-  }
-  return 'hand'
-}
-
 function buildMatchResultPayload(
   game: GameState,
   options: {
@@ -232,315 +216,24 @@ const CARD_GROUP_ORDER: Record<string, number> = {
 
 type HomeView = 'setup' | 'rules'
 
-type TutorialStep = {
-  actor: 'player' | 'bot'
-  action: GameAction
-  hintEn: string
-  hintPt: string
-}
+const TUTORIAL_FIXED_SEED = 20260405
 
-const TUTORIAL_STEPS: TutorialStep[] = [
-  {
-    actor: 'player',
-    action: { type: 'play_card', cardId: 1 },
-    hintEn: 'Play Past Event (#1) from your hand.',
-    hintPt: 'Jogue o Evento do Passado (#1) da sua mão.',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'pass_reaction' },
-    hintEn: 'Bot will pass reaction so your event resolves.',
-    hintPt: 'O bot vai passar a reação para seu evento resolver.',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'play_card', cardId: 23 },
-    hintEn: 'Bot plays a Present Event to open a reaction window.',
-    hintPt: 'O bot joga um Evento do Presente para abrir janela de reação.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'cancel_reaction' },
-    hintEn: 'Use That Never Happened now (reaction emphasis).',
-    hintPt: 'Use Isso Nunca Aconteceu agora (ênfase na reação).',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'pass_reaction' },
-    hintEn: 'Bot passes and the canceled card stays canceled.',
-    hintPt: 'O bot passa e a carta cancelada permanece cancelada.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'play_card', cardId: 21 },
-    hintEn: 'Play Present Event (#21).',
-    hintPt: 'Jogue o Evento do Presente (#21).',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'pass_reaction' },
-    hintEn: 'Bot passes reaction.',
-    hintPt: 'O bot passa a reação.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'discard_pending_event', cardId: 22 },
-    hintEn: 'Discard card #22 to resolve Present Event.',
-    hintPt: 'Descarte a carta #22 para resolver Evento do Presente.',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'draw_end_turn' },
-    hintEn: 'Bot draws and ends turn.',
-    hintPt: 'O bot compra e encerra o turno.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'play_card', cardId: 41 },
-    hintEn: 'Play Future Event (#41).',
-    hintPt: 'Jogue o Evento do Futuro (#41).',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'pass_reaction' },
-    hintEn: 'Bot passes reaction to the Future Event.',
-    hintPt: 'O bot passa a reação ao Evento do Futuro.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'select_future_target', targetPlayerIndex: 1 },
-    hintEn: 'Choose the bot as target for Future hand reveal.',
-    hintPt: 'Escolha o bot como alvo da revelação de mão do Futuro.',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'pass_reaction' },
-    hintEn: 'Bot passes TNH reaction to Future reveal effect.',
-    hintPt: 'O bot passa a reação de INC ao efeito de revelação do Futuro.',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'play_card', cardId: 2 },
-    hintEn: 'Bot plays Past Event.',
-    hintPt: 'O bot joga Evento do Passado.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'pass_reaction' },
-    hintEn: 'Pass reaction.',
-    hintPt: 'Passe a reação.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'play_card', cardId: 61 },
-    hintEn: 'Play Paradox Event (#61).',
-    hintPt: 'Jogue o Evento Paradoxo (#61).',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'pass_reaction' },
-    hintEn: 'Bot passes reaction.',
-    hintPt: 'O bot passa a reação.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'select_action_target', cardId: 1 },
-    hintEn: 'Choose your timeline card #1 as Paradox source.',
-    hintPt: 'Escolha sua carta #1 da timeline como origem do Paradoxo.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'select_future_target', targetPlayerIndex: 1 },
-    hintEn: 'Choose bot as Paradox target.',
-    hintPt: 'Escolha o bot como alvo do Paradoxo.',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'draw_end_turn' },
-    hintEn: 'Bot draws and ends turn.',
-    hintPt: 'O bot compra e encerra o turno.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'play_card', cardId: 93 },
-    hintEn: 'Play Rewrite Event (#93).',
-    hintPt: 'Jogue Reescrever Evento (#93).',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'pass_reaction' },
-    hintEn: 'Bot passes reaction.',
-    hintPt: 'O bot passa a reação.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'select_action_target', cardId: 21 },
-    hintEn: 'Select timeline card #21 to rewrite.',
-    hintPt: 'Selecione a carta #21 da timeline para reescrever.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'select_action_target', cardId: 42 },
-    hintEn: 'Select Event #42 from hand as replacement.',
-    hintPt: 'Selecione o Evento #42 da mão como substituto.',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'draw_end_turn' },
-    hintEn: 'Bot draws and ends turn.',
-    hintPt: 'O bot compra e encerra o turno.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'play_card', cardId: 113 },
-    hintEn: 'Play Time Swap (#113).',
-    hintPt: 'Jogue Troca Temporal (#113).',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'pass_reaction' },
-    hintEn: 'Bot passes reaction.',
-    hintPt: 'O bot passa a reação.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'select_action_target', cardId: 42 },
-    hintEn: 'Choose your timeline card #42 as Time Swap source.',
-    hintPt: 'Escolha sua carta #42 da timeline como origem da Troca Temporal.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'select_action_target', cardId: 24 },
-    hintEn: 'Choose bot timeline card #24 as Time Swap target.',
-    hintPt: 'Escolha a carta #24 da timeline do bot como alvo da Troca Temporal.',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'draw_end_turn' },
-    hintEn: 'Bot draws and ends turn.',
-    hintPt: 'O bot compra e encerra o turno.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'play_card', cardId: 75 },
-    hintEn: 'Play Back in Time (#75).',
-    hintPt: 'Jogue Volta no Tempo (#75).',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'pass_reaction' },
-    hintEn: 'Bot passes reaction.',
-    hintPt: 'O bot passa a reação.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'select_action_target', cardId: 42 },
-    hintEn: 'Select last timeline card #42 to return to owner hand.',
-    hintPt: 'Selecione a última carta #42 da timeline para voltar à mão do dono.',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'draw_end_turn' },
-    hintEn: 'Bot draws and ends turn.',
-    hintPt: 'O bot compra e encerra o turno.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'play_card', cardId: 99 },
-    hintEn: 'Play Local Reset (#99).',
-    hintPt: 'Jogue Reset Local (#99).',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'pass_reaction' },
-    hintEn: 'Bot passes reaction.',
-    hintPt: 'O bot passa a reação.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'select_action_target', cardId: 2 },
-    hintEn: 'Select card #2 in timeline to discard with Local Reset.',
-    hintPt: 'Selecione a carta #2 da timeline para descartar com Reset Local.',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'draw_end_turn' },
-    hintEn: 'Bot draws and ends turn.',
-    hintPt: 'O bot compra e encerra o turno.',
-  },
-  {
-    actor: 'player',
-    action: { type: 'play_card', cardId: 107 },
-    hintEn: 'Play Time Skip (#107) to finish tutorial.',
-    hintPt: 'Jogue Pular Tempo (#107) para finalizar o tutorial.',
-  },
-  {
-    actor: 'bot',
-    action: { type: 'pass_reaction' },
-    hintEn: 'Bot passes reaction and tutorial is complete.',
-    hintPt: 'O bot passa a reação e o tutorial é concluído.',
-  },
-]
-
-function matchesTutorialAction(expected: GameAction, actual: GameAction): boolean {
-  if (expected.type !== actual.type) {
-    return false
-  }
-
-  if (expected.type === 'play_card' && actual.type === 'play_card') {
-    return expected.cardId === actual.cardId
-  }
-  if (expected.type === 'discard_pending_event' && actual.type === 'discard_pending_event') {
-    return expected.cardId === actual.cardId
-  }
-  if (expected.type === 'select_action_target' && actual.type === 'select_action_target') {
-    return expected.cardId === actual.cardId
-  }
-  if (expected.type === 'select_future_target' && actual.type === 'select_future_target') {
-    return expected.targetPlayerIndex === actual.targetPlayerIndex
-  }
-
-  return true
-}
-
-function buildTutorialGameState(playerNickname: string, botNickname: string = 'Chrono Bot'): GameState {
-  const playerHand = [1, 21, 22, 41, 42, 61, 75, 85, 93, 99, 107, 113]
-  const botHand = [2, 23, 43, 86]
-
-  const usedCards = new Set<number>([...playerHand, ...botHand, 24])
-  const deck = ALL_CARD_IDS.filter((cardId) => !usedCards.has(cardId))
+function buildTutorialGameState(playerNickname: string, rules: TemporisRules, botNickname: string = 'Chrono Bot'): GameState {
+  const game = createInitialGame({
+    startingHand: 6,
+    startingTimeline: rules.setup.standard.starting_timeline,
+    totalPlayers: 2,
+    botCount: 1,
+    seed: TUTORIAL_FIXED_SEED,
+    playerRoster: [
+      { name: playerNickname, isBot: false },
+      { name: botNickname, isBot: true },
+    ],
+  })
 
   return {
-    timelineTarget: 7,
-    deck,
-    discardPile: [],
-    players: [
-      {
-        id: 1,
-        name: playerNickname,
-        isBot: false,
-        hand: [...playerHand],
-        timeline: [],
-      },
-      {
-        id: 2,
-        name: botNickname,
-        isBot: true,
-        hand: [...botHand],
-        timeline: [{ id: 24, era: getCardDefinition(24).era ?? 'present' }],
-      },
-    ],
-    currentPlayerIndex: 0,
-    phase: 'PLAYER_CHOICE',
-    pendingPlay: null,
-    pendingDiscard: null,
-    pendingActionSelection: null,
-    pendingFuturePeek: null,
-    pendingForcedSkips: null,
-    lastFutureReveal: null,
-    reactionHistory: [],
-    statusText: 'Tutorial started. Follow the scripted steps to learn all card types and action cards.',
-    winner: null,
+    ...game,
+    statusText: 'Tutorial started. Fixed-seed match with normal rules and 6-card opening hands.',
   }
 }
 
@@ -2893,61 +2586,6 @@ function App() {
   }, [game])
 
   useEffect(() => {
-    if (!tutorialActive || tutorialCompleted || !game || !rules || networkMatchActive || isFutureRevealWindowActive || isVisualFlowBlockingAutoAction) {
-      return
-    }
-
-    const scheduledStepIndex = tutorialStepIndexRef.current
-    const step = TUTORIAL_STEPS[scheduledStepIndex]
-    if (!step || step.actor !== 'bot') {
-      return
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      const liveStepIndex = tutorialStepIndexRef.current
-      if (liveStepIndex !== scheduledStepIndex) {
-        return
-      }
-
-      const liveStep = TUTORIAL_STEPS[liveStepIndex]
-      if (!liveStep || liveStep.actor !== 'bot' || !matchesTutorialAction(liveStep.action, step.action)) {
-        return
-      }
-
-      dispatchGameAction(step.action, {
-        bypassUserInputLock: true,
-        onApplied: (applied) => {
-          if (!applied) {
-            return
-          }
-
-          setTutorialHintFeedback(null)
-          const next = liveStepIndex + 1
-          if (next >= TUTORIAL_STEPS.length) {
-            setTutorialCompleted(true)
-            return
-          }
-
-          tutorialStepIndexRef.current = next
-          setTutorialStepIndex((current) => (current === liveStepIndex ? next : current))
-        },
-      })
-    }, isMobileViewport ? 1500 : 1250)
-
-    return () => window.clearTimeout(timeoutId)
-  }, [
-    tutorialActive,
-    tutorialCompleted,
-    game,
-    rules,
-    networkMatchActive,
-    isFutureRevealWindowActive,
-    isMobileViewport,
-    isVisualFlowBlockingAutoAction,
-    dispatchGameAction,
-  ])
-
-  useEffect(() => {
     if (
       !game ||
       !rules ||
@@ -2956,11 +2594,12 @@ function App() {
       !activePlayer.isBot ||
       networkMatchActive ||
       isFutureRevealWindowActive ||
-      isVisualFlowBlockingAutoAction ||
-      (tutorialActive && !tutorialCompleted)
+      isVisualFlowBlockingAutoAction
     ) {
       return
     }
+
+    const deterministicTutorial = tutorialActive
 
     const timeoutId = window.setTimeout(() => {
       setGame((current) => {
@@ -2985,7 +2624,7 @@ function App() {
             pushTurnLog(current, action, currentPlayer.name, updated)
             return updated
           }
-          const shouldDraw = Math.random() < getBotDrawChance(botProfile)
+          const shouldDraw = deterministicTutorial ? false : Math.random() < getBotDrawChance(botProfile)
           if (shouldDraw) {
             const action: GameAction = { type: 'draw_end_turn' }
             const updated = applyGameAction(current, rules, action)
@@ -2993,7 +2632,9 @@ function App() {
             pushTurnLog(current, action, currentPlayer.name, updated)
             return updated
           }
-          const chosenCard = playableCards[Math.floor(Math.random() * playableCards.length)]
+          const chosenCard = deterministicTutorial
+            ? playableCards[0]
+            : playableCards[Math.floor(Math.random() * playableCards.length)]
           const action: GameAction = { type: 'play_card', cardId: chosenCard }
           const updated = applyGameAction(current, rules, action)
           markRecentAction(actorIndex, action, current, updated)
@@ -3003,7 +2644,7 @@ function App() {
 
         if (current.phase === 'REACTION_WINDOW' && current.pendingPlay?.nextResponder === current.currentPlayerIndex) {
           const canCancel = canCurrentReactorCancel(current)
-          if (canCancel && Math.random() < getBotCancelChance(botProfile)) {
+          if (canCancel && (deterministicTutorial || Math.random() < getBotCancelChance(botProfile))) {
             const action: GameAction = { type: 'cancel_reaction' }
             const updated = applyGameAction(current, rules, action)
             markRecentAction(actorIndex, action, current, updated)
@@ -3022,7 +2663,7 @@ function App() {
           if (hand.length === 0) {
             return current
           }
-          const chosenDiscard = hand[Math.floor(Math.random() * hand.length)]
+          const chosenDiscard = deterministicTutorial ? hand[0] : hand[Math.floor(Math.random() * hand.length)]
           const action: GameAction = { type: 'discard_pending_event', cardId: chosenDiscard }
           const updated = applyGameAction(current, rules, action)
           markRecentAction(actorIndex, action, current, updated)
@@ -3035,7 +2676,9 @@ function App() {
           if (targets.length === 0) {
             return current
           }
-          const chosenTarget = chooseBotActionSelectionTarget(current, targets, botProfile)
+          const chosenTarget = deterministicTutorial
+            ? targets[0]
+            : chooseBotActionSelectionTarget(current, targets, botProfile)
           if (current.pendingActionSelection?.actionName === 'future_peek') {
             const action: GameAction = { type: 'select_future_target', targetPlayerIndex: chosenTarget }
             const updated = applyGameAction(current, rules, action)
@@ -3227,7 +2870,7 @@ function App() {
       }
 
       const current = gameRef.current
-      if (!current || !rules || current.winner || isFutureRevealWindowActive || (tutorialActive && !tutorialCompleted)) {
+      if (!current || !rules || current.winner || isFutureRevealWindowActive) {
         return
       }
 
@@ -3330,8 +2973,6 @@ function App() {
     localPlayerIndex,
     networkMatchActive,
     rules,
-    tutorialActive,
-    tutorialCompleted,
   ])
 
   const networkStatusKind = getNetworkStatusKind(networkStatus)
@@ -3908,19 +3549,22 @@ function App() {
     )
   }
 
-  const tutorialStep = tutorialActive && !tutorialCompleted ? TUTORIAL_STEPS[tutorialStepIndex] ?? null : null
-  const tutorialHighlightZone = tutorialActive && !tutorialCompleted ? getTutorialHighlightZone(tutorialStep?.action ?? null) : null
-  const tutorialHint = tutorialStep
+  const tutorialHighlightZone = null
+  const tutorialHint = tutorialActive
     ? language === 'pt'
-      ? tutorialStep.hintPt
-      : tutorialStep.hintEn
+      ? 'Partida de tutorial com seed fixa: fluxo normal, 6 cartas iniciais para jogador e bot.'
+      : 'Fixed-seed tutorial match: normal flow, 6 opening cards for player and bot.'
     : tutorialCompleted
       ? language === 'pt'
-        ? 'Tutorial concluído! Você já viu todos os tipos de carta e ações.'
-        : 'Tutorial completed! You have seen all card types and action flows.'
+        ? 'Tutorial concluído!'
+        : 'Tutorial completed!'
       : null
 
   function startGuidedTutorial() {
+    if (!rules) {
+      return
+    }
+
     if (!ensureNicknameReady()) {
       return
     }
@@ -3935,7 +3579,7 @@ function App() {
     setTotalPlayers(2)
     setNetworkMatchActive(false)
     setLocalPlayerIndex(0)
-    setGame(buildTutorialGameState(normalizeNickname(nickname)))
+    setGame(buildTutorialGameState(normalizeNickname(nickname), rules))
   }
 
   function exitGuidedTutorialToHome() {
@@ -3956,54 +3600,8 @@ function App() {
       bypassUserInputLock?: boolean
     },
   ) {
-    if (!tutorialActive || tutorialCompleted) {
-      dispatchGameAction(action, options)
-      return
-    }
-
-    const currentTutorialStepIndex = tutorialStepIndexRef.current
-    const expectedStep = TUTORIAL_STEPS[currentTutorialStepIndex] ?? null
-    if (!expectedStep) {
-      return
-    }
-
-    if (expectedStep.actor !== actor || !matchesTutorialAction(expectedStep.action, action)) {
-      if (actor === 'player') {
-        setTutorialHintFeedback(
-          language === 'pt'
-            ? 'Ação bloqueada: siga o passo atual do tutorial.'
-            : 'Action blocked: follow the current tutorial step.',
-        )
-      }
-      return
-    }
-
-    dispatchGameAction(action, {
-      ...options,
-      bypassUserInputLock: options?.bypassUserInputLock ?? actor === 'bot',
-      onApplied: (applied) => {
-        if (!applied) {
-          if (actor === 'player') {
-            setTutorialHintFeedback(
-              language === 'pt'
-                ? 'Esse passo ainda não está válido neste estado. Siga a instrução exibida.'
-                : 'This step is not valid in the current state yet. Follow the shown instruction.',
-            )
-          }
-          return
-        }
-
-        setTutorialHintFeedback(null)
-        const next = currentTutorialStepIndex + 1
-        if (next >= TUTORIAL_STEPS.length) {
-          setTutorialCompleted(true)
-          return
-        }
-
-        tutorialStepIndexRef.current = next
-        setTutorialStepIndex((current) => (current === currentTutorialStepIndex ? next : current))
-      },
-    })
+    void actor
+    dispatchGameAction(action, options)
   }
 
   const onPlayCard = (cardId: number) => {
@@ -4952,8 +4550,7 @@ function App() {
                   <div className="table-tutorial-title">
                     <span className="ui-icon chip-phase" aria-hidden="true" />
                     <strong>
-                      {language === 'pt' ? 'Tutorial Guiado' : 'Guided Tutorial'}
-                      {!tutorialCompleted ? ` • ${tutorialStepIndex + 1}/${TUTORIAL_STEPS.length}` : ''}
+                      {language === 'pt' ? 'Tutorial (Seed Fixa)' : 'Tutorial (Fixed Seed)'}
                     </strong>
                   </div>
                   {tutorialHint && <div className="table-tutorial-hint">{tutorialHint}</div>}
