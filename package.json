@@ -18,7 +18,10 @@
     "sim:rules:stress": "tsx scripts/simulate-rules.ts --games 600 --maxSteps 1200",
     "sim:rules:report": "tsx scripts/simulate-rules.ts --games 300 --maxSteps 900 --report --report-file reports/sim-rules-report.json",
     "sim:rules:replay": "tsx scripts/simulate-rules.ts --games 1 --maxSteps 1200",
-    "verify:all": "npm run build && npm run sim:rules:quick && npm run sim:rules:report"
+    "verify:all": "npm run build && npm run sim:rules:quick && npm run sim:rules:report",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
     "mongodb": "^7.1.0",
@@ -29,6 +32,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.64.0",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",

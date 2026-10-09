@@ -1,45 +1,14 @@
 import { WebSocketServer } from 'ws'
-import { MongoClient } from 'mongodb'
 import { createServer } from 'http'
+import { createPersistence } from './persistence.mjs'
 
 const PORT = Number(process.env.LAN_PORT ?? 8787)
 const ROOM_SIZE_LIMIT = 6
-const MONGO_URI = process.env.MONGO_URI ?? 'mongodb://127.0.0.1:27017'
-const MONGO_DB_NAME = process.env.MONGO_DB_NAME ?? 'temporis'
 
-let mongoClient = null
-let chatMessagesCollection = null
-let matchLogsCollection = null
-let playerStatsCollection = null
+let persistence = null
 
 const rooms = new Map()
 const clients = new Map()
-
-async function connectMongo() {
-  mongoClient = new MongoClient(MONGO_URI)
-  await mongoClient.connect()
-  const mongoDb = mongoClient.db(MONGO_DB_NAME)
-  chatMessagesCollection = mongoDb.collection('chat_messages')
-  matchLogsCollection = mongoDb.collection('match_logs')
-  playerStatsCollection = mongoDb.collection('player_stats')
-  await chatMessagesCollection.createIndex({ roomCode: 1, timestamp: -1 })
-  await matchLogsCollection.createIndex({ createdAt: -1 })
-  await matchLogsCollection.createIndex({ mode: 1, createdAt: -1 })
-  await playerStatsCollection.createIndex({ nicknameLower: 1 }, { unique: true })
-  await playerStatsCollection.createIndex({ wins: -1, losses: 1 })
-  console.log(`MongoDB connected on ${MONGO_URI} (db: ${MONGO_DB_NAME})`)
-}
-
-async function closeMongo() {
-  if (!mongoClient) {
-    return
-  }
-  await mongoClient.close()
-  mongoClient = null
-  chatMessagesCollection = null
-  matchLogsCollection = null
-  playerStatsCollection = null
-}
 
 function setCorsHeaders(response) {
   response.setHeader('Access-Control-Allow-Origin', '*')
@@ -86,8 +55,8 @@ function parseWinnerNames(winnerText) {
 }
 
 async function persistMatchResult(payload) {
-  if (!matchLogsCollection || !playerStatsCollection) {
-    throw new Error('Mongo collections are not initialized.')
+  if (!persistence) {
+    throw new Error('Persistence layer is not initialized.')
   }
 
   const mode = String(payload?.mode ?? 'local')
@@ -141,45 +110,7 @@ async function persistMatchResult(payload) {
     createdTimestamp: timestamp,
   }
 
-  await matchLogsCollection.insertOne(document)
-
-  const now = new Date()
-  const updates = normalizedPlayers.map((player) => {
-    const nicknameLower = player.nickname.toLowerCase()
-    return {
-      updateOne: {
-        filter: { nicknameLower },
-        update: {
-          $setOnInsert: {
-            nicknameLower,
-            firstSeenAt: now,
-          },
-          $set: {
-            nickname: player.nickname,
-            lastSeenAt: now,
-            lastMode: mode,
-            isBot: player.isBot,
-          },
-          $inc: {
-            gamesPlayed: 1,
-            wins: player.won ? 1 : 0,
-            losses: player.won ? 0 : 1,
-            botGames: player.isBot ? 1 : 0,
-            humanGames: player.isBot ? 0 : 1,
-          },
-        },
-        upsert: true,
-      },
-    }
-  })
-
-  if (updates.length > 0) {
-    try {
-      await playerStatsCollection.bulkWrite(updates, { ordered: false })
-    } catch (error) {
-      console.error('Failed to update player stats after saving match log:', error)
-    }
-  }
+  await persistence.recordMatchResult(document, normalizedPlayers)
 }
 
 async function handleApiRequest(request, response) {
@@ -213,27 +144,8 @@ async function handleApiRequest(request, response) {
     try {
       const limitRaw = Number(url.searchParams.get('limit') ?? 40)
       const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(100, Math.floor(limitRaw))) : 40
-      const stats = playerStatsCollection
-        ? await playerStatsCollection
-            .find({})
-            .sort({ wins: -1, losses: 1, gamesPlayed: -1, nickname: 1 })
-            .limit(limit)
-            .toArray()
-        : []
-      sendJson(response, 200, {
-        ok: true,
-        stats: stats.map((entry) => ({
-          nickname: entry.nickname,
-          isBot: Boolean(entry.isBot),
-          wins: Number(entry.wins ?? 0),
-          losses: Number(entry.losses ?? 0),
-          gamesPlayed: Number(entry.gamesPlayed ?? 0),
-          botGames: Number(entry.botGames ?? 0),
-          humanGames: Number(entry.humanGames ?? 0),
-          lastMode: entry.lastMode ?? null,
-          lastSeenAt: entry.lastSeenAt ?? null,
-        })),
-      })
+      const stats = persistence ? await persistence.getPlayerStats(limit) : []
+      sendJson(response, 200, { ok: true, stats })
     } catch (error) {
       console.error('Failed to fetch player stats:', error)
       sendJson(response, 500, { ok: false, message: 'Failed to fetch stats.' })
@@ -903,9 +815,9 @@ wss.on('connection', (socket) => {
       }
 
       broadcastToRoom(client.roomCode, chatMessage)
-      if (chatMessagesCollection) {
-        void chatMessagesCollection
-          .insertOne({
+      if (persistence) {
+        void persistence
+          .recordChatMessage({
             roomCode: chatMessage.roomCode,
             fromClientId: chatMessage.fromClientId,
             sender: chatMessage.sender,
@@ -1086,11 +998,12 @@ wss.on('connection', (socket) => {
 })
 
 try {
-  await connectMongo()
+  persistence = await createPersistence()
 } catch (error) {
-  console.error('Failed to connect to MongoDB:', error)
+  console.error('Failed to initialize persistence layer:', error)
   process.exit(1)
 }
+console.log(`Persistence layer ready (mode: ${persistence.kind})`)
 
 let shuttingDown = false
 
@@ -1116,7 +1029,9 @@ async function shutdown(signal) {
   await new Promise((resolve) => {
     httpServer.close(() => resolve())
   })
-  await closeMongo()
+  if (persistence) {
+    await persistence.close()
+  }
   process.exit(0)
 }
 

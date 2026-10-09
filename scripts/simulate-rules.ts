@@ -264,7 +264,7 @@ function applyValidAction(game: GameState, rules: TemporisRules, action: GameAct
 function loadRules(): TemporisRules {
   const currentFile = fileURLToPath(import.meta.url)
   const currentDir = dirname(currentFile)
-  const defaultPath = resolve(currentDir, '..', '..', 'temporis_rules_v1.json')
+  const defaultPath = resolve(currentDir, '..', 'public', 'temporis_rules_v1.json')
   const raw = readFileSync(defaultPath, 'utf-8')
   return JSON.parse(raw) as TemporisRules
 }

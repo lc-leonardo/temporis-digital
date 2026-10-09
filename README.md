@@ -34,14 +34,26 @@ npm run dev
 npm run lan:server
 ```
 
-This server now requires a local MongoDB connection.
+Persistence is optional. By default (`DB_MODE=auto`) the server tries to connect to a local
+MongoDB and automatically falls back to a local JSON file if MongoDB is unavailable.
 
-Default local values (already built in):
+Available `DB_MODE` values:
+
+- `auto` (default): try MongoDB, fall back to JSON file
+- `file`: JSON file only — no database needed (data in `server/data/temporis-db.json`)
+- `mongo`: require MongoDB (server fails to start if unavailable)
+- `none`: persistence disabled (chat/match logs and leaderboard are not saved)
+
+PowerShell example without any database:
+
+```bash
+$env:DB_MODE="file"; npm run lan:server
+```
+
+MongoDB default local values (only used when MongoDB mode is active):
 
 - `MONGO_URI=mongodb://127.0.0.1:27017`
 - `MONGO_DB_NAME=temporis`
-
-If your local MongoDB is running with default settings, no extra config is needed.
 
 PowerShell custom example:
 
@@ -131,6 +143,27 @@ Full run:
 ```bash
 npm run sim:rules
 ```
+
+## E2E tests (Playwright)
+
+Browser-level regression suite covering the home layout, gameplay flows and a real
+two-client LAN match (host + guest in the same room, hand masking, chat).
+
+```bash
+npx playwright install chromium   # one-time browser download
+npm run test:e2e                  # headless run (auto-starts dev + LAN servers)
+npm run test:e2e:ui               # interactive Playwright UI
+npm run test:e2e:headed           # watch the browser run
+```
+
+What this validates:
+
+- home layout hugs content (no forced scroll / stretched cards)
+- leaderboard API integration
+- hand fan: every card center is clickable and hovered cards paint above neighbors
+- reaction window: single pass control, HUD never blocks clicks underneath
+- keyboard quick actions (1/2) for playing and drawing
+- LAN: room host/join, loading barrier, synchronized state, masked opponent hands, chat both ways
 
 Custom run:
 

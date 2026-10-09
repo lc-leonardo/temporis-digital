@@ -1,5 +1,6 @@
 .app-shell {
   min-height: 100vh;
+  box-sizing: border-box;
   width: min(1400px, 100%);
   margin: 0 auto;
   padding: 1rem;
@@ -14,6 +15,7 @@
 
 .app-shell.app-home {
   width: min(1420px, 100%);
+  min-height: 0;
   background:
     radial-gradient(circle at 12% 0%, rgba(99, 217, 255, 0.14), rgba(99, 217, 255, 0) 45%),
     radial-gradient(circle at 88% 0%, rgba(255, 191, 102, 0.1), rgba(255, 191, 102, 0) 42%),
@@ -90,6 +92,7 @@
 .home-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  align-items: start;
   gap: 0.9rem;
 }
 
@@ -682,6 +685,72 @@
   padding: 0.35rem 0.5rem;
   font-size: 0.8rem;
   max-width: min(760px, calc(100% - 1.2rem));
+  /* Click-through so it never blocks seat/card targets underneath; only its buttons receive clicks. */
+  pointer-events: none;
+}
+
+.table-action-hud button {
+  pointer-events: auto;
+}
+
+/* Desktop: dock the action HUD to the board's left edge, vertically centered,
+   so it never covers the top-center opponent seat. Mobile keeps the compact top bar. */
+@media (min-width: 961px) {
+  .table-action-hud {
+    top: 50%;
+    left: 0.75rem;
+    transform: translateY(-50%);
+    max-width: min(330px, 30vw);
+    max-height: calc(100% - 1.5rem);
+    overflow-y: auto;
+  }
+
+  .table-action-hud .table-prompt-text {
+    white-space: normal;
+  }
+
+  /* Compact reaction content: card beside the queue instead of stacked. */
+  .table-action-hud .reaction-card-ui {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .table-action-hud .reaction-queue {
+    width: auto;
+    flex: 1 1 150px;
+  }
+}
+
+.setup-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.78rem;
+  opacity: 0.75;
+  text-align: center;
+}
+
+.mobile-card-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.4rem;
+  padding: 0.45rem;
+  border: 1px solid rgba(139, 198, 255, 0.45);
+  border-radius: 10px;
+  background: rgba(8, 15, 27, 0.92);
+}
+
+.mobile-card-preview img {
+  width: 110px;
+  border-radius: 8px;
+  display: block;
+}
+
+.mobile-card-preview-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 
 .table-phase-pill {
@@ -2153,7 +2222,7 @@
     translateY(calc(var(--fan-drop, 0px) - 22px))
     rotate(var(--fan-rotation, 0deg))
     scale(1.055) !important;
-  z-index: 10;
+  z-index: 200;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
 }
 
@@ -2216,6 +2285,7 @@
     translateY(calc(var(--fan-drop, 0px) - 24px))
     rotate(var(--fan-rotation, 0deg))
     scale(1.075) !important;
+  z-index: 200;
   box-shadow: 0 0 0 2px rgba(255, 118, 118, 0.5), 0 0 24px rgba(255, 88, 88, 0.52);
 }
 
@@ -2235,6 +2305,7 @@
     translateY(calc(var(--fan-drop, 0px) - 23px))
     rotate(var(--fan-rotation, 0deg))
     scale(1.065) !important;
+  z-index: 200;
   box-shadow: 0 0 0 2px rgba(255, 194, 123, 0.34), 0 12px 26px rgba(0, 0, 0, 0.34);
 }
 

@@ -44,14 +44,14 @@ type TurnLogEntry = { id: string; turn: number; text: string; timestamp: number 
 type ChatLogEntry = { id: string; sender: string; text: string; timestamp: number }
 type PlayerStatsEntry = {
   nickname: string
-  gamesPlayed: number
+  isBot: boolean
   wins: number
   losses: number
-  botWins: number
-  botLosses: number
-  humanWins: number
-  humanLosses: number
-  updatedAt?: string
+  gamesPlayed: number
+  botGames: number
+  humanGames: number
+  lastMode: string | null
+  lastSeenAt: string | null
 }
 
 function normalizeNickname(rawNickname: string): string {
@@ -844,6 +844,11 @@ function App() {
   const [isMobileFullscreen, setIsMobileFullscreen] = useState<boolean>(false)
   const [isDiscardCascadeOpen, setIsDiscardCascadeOpen] = useState<boolean>(false)
   const [drawnCardFlashId, setDrawnCardFlashId] = useState<number | null>(null)
+  const [mobileCardPreview, setMobileCardPreview] = useState<{ cardId: number; confirm: (() => void) | null } | null>(null)
+
+  useEffect(() => {
+    setMobileCardPreview(null)
+  }, [game?.phase, game?.currentPlayerIndex, game?.winner])
   const [rematchSecondsLeft, setRematchSecondsLeft] = useState<number | null>(null)
   const [localRematchDecision, setLocalRematchDecision] = useState<'accept' | 'decline' | null>(null)
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
@@ -1688,8 +1693,9 @@ function App() {
       if (!response.ok) {
         throw new Error('failed')
       }
-      const payload = (await response.json()) as { items?: PlayerStatsEntry[] }
-      setLeaderboard(Array.isArray(payload.items) ? payload.items : [])
+      const payload = (await response.json()) as { stats?: PlayerStatsEntry[]; items?: PlayerStatsEntry[] }
+      const items = Array.isArray(payload.stats) ? payload.stats : Array.isArray(payload.items) ? payload.items : []
+      setLeaderboard(items)
     } catch {
       setLeaderboardError(
         language === 'pt'
@@ -1735,7 +1741,7 @@ function App() {
   )
 
   const ensureNicknameReady = useCallback((reason?: string): boolean => {
-    let normalized = normalizeNickname(nickname)
+    const normalized = normalizeNickname(nickname)
     if (isNicknameValid(normalized)) {
       if (normalized !== nickname) {
         setNickname(normalized)
@@ -3341,6 +3347,12 @@ function App() {
                 {language === 'pt' ? 'Ver Regras' : 'View Rules'}
               </button>
             </div>
+
+            <p className="setup-hint">
+              {language === 'pt'
+                ? 'Dica: durante a partida, use as teclas 1/2/3 para ações rápidas.'
+                : 'Tip: during a match, use keys 1/2/3 for quick actions.'}
+            </p>
           </article>
 
           <article className="status-panel setup-card lan">
@@ -3673,10 +3685,6 @@ function App() {
     setChatInput('')
   }
 
-  const onResolvePending = () => {
-    dispatchTutorialAwareAction({ type: 'pass_reaction' }, 'player')
-  }
-
   const onCancelPending = () => {
     dispatchTutorialAwareAction({ type: 'cancel_reaction' }, 'player')
   }
@@ -3902,15 +3910,27 @@ function App() {
     }
 
     if ((isCardTargetSelection || isPlayerTargetSelection) && firstSelectableTarget !== null) {
+      const hasSingleValidTarget =
+        (isHandTargetPickerVisible && selectedHandTargetCardIds.length > 0
+          ? selectedHandTargetCardIds.length
+          : selectableActionCardIds.length) <= 1
       actions.push({
         key: '1',
         label: isPlayerTargetSelection
-          ? language === 'pt'
-            ? 'Selecionar único jogador válido'
-            : 'Select only valid player'
-          : language === 'pt'
-            ? 'Selecionar único alvo válido'
-            : 'Select only valid target',
+          ? hasSingleValidTarget
+            ? language === 'pt'
+              ? 'Selecionar único jogador válido'
+              : 'Select only valid player'
+            : language === 'pt'
+              ? 'Selecionar 1º jogador válido'
+              : 'Select first valid player'
+          : hasSingleValidTarget
+            ? language === 'pt'
+              ? 'Selecionar único alvo válido'
+              : 'Select only valid target'
+            : language === 'pt'
+              ? 'Selecionar 1º alvo válido'
+              : 'Select first valid target',
         action: isPlayerTargetSelection
           ? { type: 'select_future_target', targetPlayerIndex: firstSelectableTarget }
           : { type: 'select_action_target', cardId: firstSelectableTarget },
@@ -4484,6 +4504,7 @@ function App() {
                       key={`quick-action-${quickAction.key}-${quickAction.label}`}
                       type="button"
                       className="quick-action-button"
+                      title={language === 'pt' ? `Atalho de teclado: ${quickAction.key}` : `Keyboard shortcut: ${quickAction.key}`}
                       onClick={() => {
                         if (quickAction.action.type === 'pass_reaction') {
                           dispatchGameAction(quickAction.action, { bypassUserInputLock: true })
@@ -4555,22 +4576,15 @@ function App() {
                   </div>
                   {tutorialHint && <div className="table-tutorial-hint">{tutorialHint}</div>}
                   {tutorialHintFeedback && <div className="table-tutorial-feedback">{tutorialHintFeedback}</div>}
+                  <div className="table-tutorial-hint keys-hint">
+                    {language === 'pt'
+                      ? 'Teclas rápidas: 1 = jogar/confirmar · 2 = comprar/passar'
+                      : 'Quick keys: 1 = play/confirm · 2 = draw/pass'}
+                  </div>
                 </div>
               )}
               {game.phase === 'REACTION_WINDOW' && reactionCardId !== null && (
                 <div key={reactionWindowVisualKey} className="reaction-card-ui">
-                  <div className="reaction-card-top-row">
-                    {isReactionTimerOwner && (
-                      <button
-                        type="button"
-                        className="reaction-skip-button"
-                        onClick={onResolvePending}
-                        disabled={isFutureRevealWindowActive}
-                      >
-                        {language === 'pt' ? 'Pular' : 'Skip'}
-                      </button>
-                    )}
-                  </div>
                   <div
                     className={`reaction-card-highlight ${canLocalCancelReactionNow ? 'active' : ''}`}
                     aria-label={language === 'pt' ? 'Contexto da carta em reação' : 'Reaction card context'}
@@ -4731,6 +4745,34 @@ function App() {
                       {language === 'pt' ? 'Comprar' : 'Draw'}
                     </button>
                   )}
+                  {isMobileViewport && mobileCardPreview && (
+                    <div className="mobile-card-preview">
+                      <CardImage
+                        id={mobileCardPreview.cardId}
+                        locale={language}
+                        width={110}
+                        disabled
+                        className="mobile-card-preview-card"
+                      />
+                      <div className="mobile-card-preview-actions">
+                        {mobileCardPreview.confirm && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const confirm = mobileCardPreview.confirm
+                              setMobileCardPreview(null)
+                              confirm?.()
+                            }}
+                          >
+                            {language === 'pt' ? 'Confirmar' : 'Confirm'}
+                          </button>
+                        )}
+                        <button type="button" onClick={() => setMobileCardPreview(null)}>
+                          {language === 'pt' ? 'Fechar' : 'Close'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <div
                     className={`hand-grid hand-fan ${isFutureRevealWindowActive ? 'blocked' : ''}`}
                     style={{ '--hand-card-width': `${selfHandLayout.cardWidth}px` } as AppCssVars}
@@ -4760,19 +4802,24 @@ function App() {
                           id={entry.cardId}
                           locale={language}
                           className={combinedHandCardClassName || undefined}
-                          onClick={() =>
-                            isReactionTnhCard
-                              ? onCancelPending()
+                          onClick={() => {
+                            const resolvedCardAction: (() => void) | null = isReactionTnhCard
+                              ? () => onCancelPending()
                               : isSelfHandTargetSelection
-                              ? isCardTargetInHand
-                                ? onSelectActionTarget(entry.cardId)
-                                : undefined
-                              : isSelfDiscardWindow
-                                ? onDiscardForEvent(entry.cardId)
-                                : isPlayableCard
-                                  ? onPlayCard(entry.cardId)
-                                  : undefined
-                          }
+                                ? isCardTargetInHand
+                                  ? () => onSelectActionTarget(entry.cardId)
+                                  : null
+                                : isSelfDiscardWindow
+                                  ? () => onDiscardForEvent(entry.cardId)
+                                  : isPlayableCard
+                                    ? () => onPlayCard(entry.cardId)
+                                    : null
+                            if (isMobileViewport) {
+                              setMobileCardPreview({ cardId: entry.cardId, confirm: resolvedCardAction })
+                              return
+                            }
+                            resolvedCardAction?.()
+                          }}
                           disabled={
                             isFutureRevealWindowActive ||
                             (!isSelfPlayWindow && !isSelfDiscardWindow && !isSelfHandTargetSelection && !isReactionTnhCard) ||

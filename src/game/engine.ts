@@ -50,13 +50,6 @@ function cardLabel(cardId: number): string {
   return `${getCardNameById(cardId)} (#${cardId})`
 }
 
-function handLabel(hand: number[]): string {
-  if (hand.length === 0) {
-    return 'empty hand'
-  }
-  return hand.map((cardId) => cardLabel(cardId)).join(', ')
-}
-
 function hasThatNeverHappenedInHand(hand: number[]): boolean {
   return hand.some((cardId) => inRange(cardId, RANGE.actions.that_never_happened))
 }
@@ -264,20 +257,21 @@ function applyEventOnPlay(
   playedBy: number,
 ): { statusSuffix: string; requiresManualDiscard: boolean } {
   const era = card.era ?? 'future'
+  const eraLabel = era.charAt(0).toUpperCase() + era.slice(1)
   const current = players[playedBy]
   const timelineCard: TimelineCard = { id: card.id, era }
   insertEventIntoTimeline(current.timeline, timelineCard, playedBy)
 
   if (era === 'past') {
     return {
-      statusSuffix: 'past event placed. Draw 1 card.',
+      statusSuffix: 'Past event placed. Draw 1 card.',
       requiresManualDiscard: false,
     }
   }
 
   if (era === 'present') {
     return {
-      statusSuffix: `${era} event placed. Choose 1 card to discard, then draw 1.`,
+      statusSuffix: `${eraLabel} event placed. Choose 1 card to discard, then draw 1.`,
       requiresManualDiscard: true,
     }
   }
@@ -289,7 +283,7 @@ function applyEventOnPlay(
     }
   }
 
-  return { statusSuffix: `${era} event resolved.`, requiresManualDiscard: false }
+  return { statusSuffix: `${eraLabel} event resolved.`, requiresManualDiscard: false }
 }
 
 function findTimelineOwnerAndIndex(players: PlayerState[], cardId: number): { playerIndex: number; index: number } | null {
@@ -940,7 +934,7 @@ export function resolvePendingPlay(game: GameState, rules: TemporisRules): GameS
       },
       reactionHistory: updatedReactionHistory,
       currentPlayerIndex: game.pendingFuturePeek.nextPlayerIndex,
-      statusText: `${players[game.pendingFuturePeek.playedBy].name} revealed ${target.name}'s hand: ${handLabel(target.hand)}. ${players[game.pendingFuturePeek.nextPlayerIndex].name}'s turn.`,
+      statusText: `${players[game.pendingFuturePeek.playedBy].name} revealed ${target.name}'s hand. ${players[game.pendingFuturePeek.nextPlayerIndex].name}'s turn.`,
     })
   }
 
@@ -1459,7 +1453,7 @@ export function selectActionTarget(game: GameState, cardId: number): GameState {
       },
       reactionHistory: game.reactionHistory,
       currentPlayerIndex: pending.nextPlayerIndex,
-      statusText: `${acting.name} revealed ${target.name}'s hand: ${handLabel(target.hand)}. ${players[pending.nextPlayerIndex].name}'s turn.`,
+      statusText: `${acting.name} revealed ${target.name}'s hand. ${players[pending.nextPlayerIndex].name}'s turn.`,
     })
   }
 
